@@ -1,0 +1,33 @@
+# Keep source and configuration files deterministic across Windows and CI.
+backtesting/*.py text eol=lf
+strategies/*.py text eol=lf
+research/*.py text eol=lf
+tests/*.py text eol=lf
+web_ui.py text eol=lf
+risk.py text eol=lf
+strategy_filters.py text eol=lf
+vibetrader.py text eol=lf
+mega_trading_bot.py -text whitespace=cr-at-eol
+*.js text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ini text eol=lf
+
+# Native Windows command files retain Windows line endings.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets must never be line-ending normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.db binary
+*.sqlite binary

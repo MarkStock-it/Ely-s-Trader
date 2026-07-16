@@ -1338,6 +1338,7 @@ if __name__ == "__main__":
         from backtesting.engine import BacktestEngine
         from backtesting.models import BacktestConfig
         from backtesting.reports import export_csv, export_json
+        from strategies.registry import default_registry
 
         command = sys.argv[1]
         parser = argparse.ArgumentParser(prog=f"mega_trading_bot.py {command}")
@@ -1364,11 +1365,12 @@ if __name__ == "__main__":
             risk_fraction=cli.risk_fraction, stop_loss_pct=cli.stop_loss,
             take_profit_pct=cli.take_profit, trailing_stop_pct=cli.trailing_stop,
             minimum_position_size=cli.minimum_position_size)
-        registry = {"macd": strategy_macd}
+        strategy_registry = default_registry()
+        registry = strategy_registry.enabled()
         if command == "backtest":
-            if cli.strategy not in registry:
-                parser.error(f"unknown or unavailable strategy: {cli.strategy}")
-            result = BacktestEngine(data, config).run(registry[cli.strategy])
+            try: selected = strategy_registry.get(cli.strategy)
+            except KeyError as exc: parser.error(str(exc))
+            result = BacktestEngine(data, config).run(selected)
             payload = result
             print(json.dumps(result.metrics, indent=2, default=str))
         else:

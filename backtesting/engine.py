@@ -13,6 +13,7 @@ import pandas as pd
 from .data_loader import validate_ohlcv
 from .metrics import calculate_metrics
 from .models import BacktestConfig, BacktestResult, Trade
+from strategies.base import Action, Signal
 
 
 class BacktestEngine:
@@ -27,7 +28,7 @@ class BacktestEngine:
         for i, row in df.iterrows():
             # Pending close signal executes at this open. Strategy never sees row i yet.
             if pending and pending[0] <= i:
-                signal, reason = pending[1], pending[2]
+                signal, reason, signal_stop, signal_target = pending[1], pending[2], pending[3], pending[4]
                 if signal == "buy" and position is None:
                     market = float(row.open); fill = self._fill(market, "buy")
                     budget = cash * c.risk_fraction
@@ -35,18 +36,21 @@ class BacktestEngine:
                     if qty >= c.minimum_position_size:
                         fee = fill * qty * c.fee_rate; cash -= fill * qty + fee
                         position = {"timestamp": row.timestamp, "index": i, "market": market, "fill": fill,
-                                    "qty": qty, "fee": fee, "reason": reason, "highest": market}
+                                    "qty": qty, "fee": fee, "reason": reason, "highest": market,
+                                    "signal_stop": signal_stop, "signal_target": signal_target}
                 elif signal == "sell" and position is not None:
                     cash, position = self._close(cash, position, row.timestamp, float(row.open), reason, trades)
                 pending = None
 
             if position is not None:
                 position["highest"] = max(position["highest"], float(row.high))
-                stop = position["market"] * (1 - c.stop_loss_pct) if c.stop_loss_pct is not None else None
+                stop = position.get("signal_stop")
+                if stop is None and c.stop_loss_pct is not None: stop = position["market"] * (1 - c.stop_loss_pct)
                 if c.trailing_stop_pct is not None:
                     trailing = position["highest"] * (1 - c.trailing_stop_pct)
                     stop = max(stop or trailing, trailing)
-                target = position["market"] * (1 + c.take_profit_pct) if c.take_profit_pct is not None else None
+                target = position.get("signal_target")
+                if target is None and c.take_profit_pct is not None: target = position["market"] * (1 + c.take_profit_pct)
                 stop_hit, target_hit = stop is not None and row.low <= stop, target is not None and row.high >= target
                 if stop_hit:  # deliberately first, including ambiguous candles
                     cash, position = self._close(cash, position, row.timestamp, stop, "stop_loss", trades)
@@ -61,9 +65,11 @@ class BacktestEngine:
                            "average_entry_price": position["fill"] if position else 0.0, "drawdown": drawdown,
                            "drawdown_percentage": drawdown / peak * 100 if peak else 0.0})
             # Copy is the anti-lookahead boundary: only rows <= i are supplied.
-            signal = strategy(df.iloc[:i + 1].copy())
-            if signal in ("buy", "sell"):
-                pending = (i + 1 + c.latency_candles, signal, "strategy_signal")
+            raw_signal = strategy(df.iloc[:i + 1].copy())
+            signal = _normalize_signal(raw_signal)
+            if signal.action in (Action.BUY, Action.SELL):
+                pending = (i + 1 + c.latency_candles, signal.action.value, signal.reason,
+                           signal.stop_loss, signal.take_profit)
 
         if position is not None:
             last = df.iloc[-1]
@@ -109,3 +115,9 @@ def _duration(a, b):
 def _git_commit():
     try: return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=2).stdout.strip() or None
     except Exception: return None
+
+
+def _normalize_signal(value):
+    if isinstance(value, Signal): return value
+    if value in ("buy", "sell"): return Signal(Action(value), 1.0, "strategy_signal")
+    return Signal(Action.HOLD, 0.0, "no signal")

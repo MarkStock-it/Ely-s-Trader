@@ -387,6 +387,27 @@ def backtest():
         return jsonify(error=f"Backtest failed: {exc}"), 502
 
 
+@APP.post("/api/strategy-tournament")
+def strategy_tournament():
+    payload = request.get_json(force=True) or {}; symbol = str(payload.get("symbol") or "BTC/USDT").upper()
+    timeframe = str(payload.get("timeframe") or "1h"); initial = float(payload.get("initial_balance") or 10000)
+    try:
+        import ccxt, pandas as pd
+        from backtesting.comparison import compare_strategies
+        from backtesting.models import BacktestConfig
+        from strategies.registry import default_registry
+        cfg=load_config(); exchange=getattr(ccxt,cfg.get("EXCHANGE","binance"))({"enableRateLimit":True})
+        rows=exchange.fetch_ohlcv(symbol,timeframe=timeframe,limit=1000)
+        data=pd.DataFrame(rows,columns=["timestamp","open","high","low","close","volume"])
+        data["timestamp"]=pd.to_datetime(data.timestamp,unit="ms",utc=True)
+        config=BacktestConfig(symbol=symbol,timeframe=timeframe,starting_balance=initial,
+            fee_rate=float(cfg.get("PAPER_FEE_RATE",.001)),spread_rate=float(cfg.get("PAPER_SPREAD_RATE",.0002)),
+            slippage_rate=float(cfg.get("PAPER_SLIPPAGE_RATE",.0005)),risk_fraction=float(cfg.get("MAX_POSITION_FRACTION",1)))
+        ranking=compare_strategies(data,config,default_registry().enabled())
+        return jsonify(ranking=[{k:v for k,v in row.items() if k!="result"} for row in ranking],candles=len(data))
+    except Exception as exc: return jsonify(error=f"Tournament failed: {exc}"),502
+
+
 @APP.get("/api/research/status")
 def research_status():
     from research.manager import ResearchManager

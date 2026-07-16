@@ -176,6 +176,12 @@ $('run-backtest-btn').onclick = async () => {
     } catch (e) { $('backtest-results').innerHTML = `<div class="empty-state">${e.message}</div>`; }
     finally { button.disabled = false; button.textContent = 'Run Backtest'; }
 };
+$('run-tournament-btn').onclick = async () => {
+    const button=$('run-tournament-btn'); button.disabled=true;
+    try { const r=await api('/api/strategy-tournament',{method:'POST',body:JSON.stringify({symbol:$('backtest-symbol').value,timeframe:$('backtest-timeframe').value,initial_balance:Number($('backtest-initial-balance').value)})});
+      $('tournament-results').innerHTML=`<table><thead><tr><th>Rank</th><th>Strategy</th><th>Return</th><th>Drawdown</th><th>Win rate</th><th>PF</th><th>Sharpe</th><th>Trades</th><th>Score</th></tr></thead><tbody>${r.ranking.map(x=>`<tr><td>${x.rank}</td><td>${x.strategy}</td><td>${number(x.net_return)}%</td><td>${number(x.max_drawdown)}%</td><td>${number(x.win_rate)}%</td><td>${number(x.profit_factor)}</td><td>${number(x.sharpe)}</td><td>${x.trades}</td><td>${number(x.composite_score)}</td></tr>`).join('')}</tbody></table>`;
+    } catch(e){$('tournament-results').innerHTML=`<div class="empty-state">${e.message}</div>`;} finally{button.disabled=false;}
+};
 $('reset-all-btn').onclick = async () => { if (!confirm('Reload saved settings and discard unsaved values?')) return; await loadConfig(); toast('Settings reloaded'); };
 
 async function refreshResearch() {
