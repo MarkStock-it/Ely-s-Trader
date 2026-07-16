@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "research_id": "vibe-run-id-or-report-hash",
+  "generated_at": "2026-07-16T00:00:00Z",
+  "expires_at": "2026-07-23T00:00:00Z",
+  "symbol": "BTC/USDT",
+  "timeframe": "1m",
+  "direction": "long",
+  "confidence": 0.72,
+  "oos_trades": 35,
+  "oos_expectancy": 4.25,
+  "oos_max_drawdown_pct": 8.4,
+  "notes": "Values must come from an inspected Vibe-Trading OOS/walk-forward report."
+}

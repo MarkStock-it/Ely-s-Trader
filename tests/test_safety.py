@@ -7,7 +7,7 @@ import safety
 
 
 def test_validate_config_ok():
-    cfg = {"EXCHANGE": "binance", "SYMBOL": "BTCUSDT", "PAPER_MODE": True, "DATA_PATH": "."}
+    cfg = {"EXCHANGE": "binance", "SYMBOL": "BTCUSDT", "PAPER_MODE": True, "LIVE_MODE": False, "DATA_PATH": "."}
     safety.validate_config(cfg)
 
 
@@ -27,7 +27,16 @@ def test_circuit_breaker():
     assert cb.allow()
     cb.record_failure()
     assert not cb.allow()
-    # wait for cooldown
     import time
     time.sleep(1.1)
     assert cb.allow()
+
+
+def test_live_requires_native_protective_stops():
+    cfg = {"EXCHANGE": "binance", "SYMBOL": "BTCUSDT", "PAPER_MODE": False,
+           "LIVE_MODE": True, "DATA_PATH": ".", "API_KEY": "x", "API_SECRET": "y"}
+    try:
+        safety.validate_config(cfg)
+        assert False, "Expected native-stop validation failure"
+    except ValueError as exc:
+        assert "protective stops" in str(exc)

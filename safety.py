@@ -13,13 +13,34 @@ logger = logging.getLogger("mega_trading_bot.safety")
 
 def validate_config(cfg: Dict[str, Any]) -> None:
     """Basic validation of critical configuration keys; raises ValueError on error."""
-    required = ["EXCHANGE", "SYMBOL", "PAPER_MODE", "DATA_PATH"]
+    required = ["EXCHANGE", "SYMBOL", "PAPER_MODE", "LIVE_MODE", "DATA_PATH"]
     errors = []
     for k in required:
         if k not in cfg:
             errors.append(f"Missing config key: {k}")
     if not isinstance(cfg.get("PAPER_MODE", True), bool):
         errors.append("PAPER_MODE must be boolean")
+    if not isinstance(cfg.get("LIVE_MODE", False), bool):
+        errors.append("LIVE_MODE must be boolean")
+    paper = cfg.get("PAPER_MODE")
+    live = cfg.get("LIVE_MODE")
+    if isinstance(paper, bool) and isinstance(live, bool) and paper == live:
+        errors.append("Exactly one of PAPER_MODE and LIVE_MODE must be true")
+    if live and not (cfg.get("API_KEY") and cfg.get("API_SECRET")):
+        errors.append("LIVE_MODE requires both API_KEY and API_SECRET")
+    if live and not cfg.get("NATIVE_PROTECTIVE_STOPS", False):
+        errors.append("LIVE_MODE requires verified exchange-native protective stops")
+    for key in ("RISK_PER_TRADE", "DAILY_LOSS_LIMIT", "MAX_DRAWDOWN", "MAX_AGGREGATE_RISK"):
+        try:
+            value = float(cfg.get(key, 0.01))
+            if not 0 < value <= 1: errors.append(f"{key} must be in (0, 1]")
+        except (TypeError, ValueError): errors.append(f"{key} must be numeric")
+    for key in ("PAPER_FEE_RATE", "PAPER_SLIPPAGE_RATE", "PAPER_SPREAD_RATE"):
+        try:
+            if float(cfg.get(key, 0)) < 0:
+                errors.append(f"{key} must be non-negative")
+        except (TypeError, ValueError):
+            errors.append(f"{key} must be numeric")
     if errors:
         raise ValueError("; ".join(errors))
 

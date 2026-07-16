@@ -5,10 +5,14 @@ requests
 python-dotenv
 xgboost
 tensorflow
+# TensorFlow's generated protobuf code is currently 5.x; protobuf 6 emits
+# compatibility warnings and may become incompatible with that generated code.
+protobuf>=5.28.3,<6
 textblob
 flask
 pytest
 prometheus-client
 websocket-client
 python-json-logger
+vibe-trading-ai>=0.1.11,<0.2
 

@@ -1,0 +1,21 @@
+{
+  "request": {
+    "request_id": "manual-fixture-1", "strategy_id": "fixture", "strategy_version": "1",
+    "symbol": "TEST/USDT", "timeframe": "1h", "direction": "long",
+    "strategy_parameters": {"atr_period": 14, "atr_multiplier": 1.5, "regime_ema_period": 50, "regime_min_slope": 0.002, "min_volume_ratio": 0.8, "min_volatility": 0.0002, "max_volatility": 0.05},
+    "risk_parameters": {"risk_per_trade": 0.01, "max_aggregate_risk": 0.03, "max_position_fraction": 1},
+    "execution_assumptions": {"fee_rate": 0.001, "spread_rate": 0.0002, "slippage_rate": 0.0005, "stop_loss": "ATR", "take_profit": null, "execution_convention": "close signal; next candle open", "intrabar_policy": "stop_first"},
+    "data_period": {"identifier": "synthetic-fixture"}, "minimum_oos_trades": 2,
+    "minimum_expectancy": 0.0, "maximum_drawdown": 20.0, "minimum_confidence": 0.5,
+    "created_at": "2026-07-16T16:08:49.915121+00:00", "strategy_source_hash": "", "minimum_profit_factor": null
+  },
+  "stdout": {
+    "schema_version": 1, "request_id": "manual-fixture-1", "strategy_id": "fixture",
+    "symbol": "TEST/USDT", "timeframe": "1h", "direction": "long",
+    "generated_at": "2026-07-16T16:08:49.915121+00:00", "data_start": "2026-07-01T00:00:00+00:00",
+    "data_end": "2026-07-16T16:00:00+00:00", "in_sample_metrics": {},
+    "out_of_sample_metrics": {"trade_count": 3, "expectancy": 1.0, "maximum_drawdown_percentage": 10.0, "net_return_percentage": 2.0, "profit_factor": 1.2},
+    "confidence": 0.6, "warnings": [], "limitations": ["synthetic fixture; not genuine research"],
+    "source_run_id": "fixture-only", "configuration_fingerprint": "216ac80786a6918dbcd16bbc5f6529b1c5e7ccab2e7f6569497f35c4ebd36b3c"
+  }
+}

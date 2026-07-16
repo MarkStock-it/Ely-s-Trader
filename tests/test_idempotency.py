@@ -9,7 +9,7 @@ from execution import ExecutionEngine
 def test_idempotency_paper_mode():
     d = tempfile.mkdtemp()
     db_path = os.path.join(d, "db.sqlite")
-    cfg = {"EXCHANGE": "binance", "PAPER_MODE": True, "DATA_PATH": d}
+    cfg = {"EXCHANGE": "binance", "SYMBOL": "BTCUSDT", "PAPER_MODE": True, "LIVE_MODE": False, "DATA_PATH": d}
     em = ExchangeManager(cfg)
     # init DB
     import db as dbmod

@@ -17,7 +17,7 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 import logging
 from logging.handlers import RotatingFileHandler
 try:
-    from pythonjsonlogger import jsonlogger
+    from pythonjsonlogger import json as jsonlogger
     JSON_LOGGER_AVAILABLE = True
 except Exception:
     JSON_LOGGER_AVAILABLE = False
@@ -35,6 +35,9 @@ import db
 from marketdata import MarketDataManager
 from execution import ExecutionEngine
 import metrics
+from risk import cap_quantity, entry_guard, position_risk
+from strategy_filters import signal_allowed
+from vibetrader import VibeResearchGate
 
 try:
     from dotenv import load_dotenv
@@ -70,6 +73,10 @@ DEFAULT_CONFIG = {
     "SYMBOL": "BTCUSDT",
     "INTERVAL": "1m",
     "RISK_PER_TRADE": 0.01,
+    "DAILY_LOSS_LIMIT": 0.03,
+    "MAX_DRAWDOWN": 0.15,
+    "MAX_AGGREGATE_RISK": 0.03,
+    "MAX_POSITION_FRACTION": 1.0,
     "MAX_OPEN_POSITIONS": 3,
     "ATR_PERIOD": 14,
     "ATR_MULTIPLIER": 1.5,
@@ -80,6 +87,10 @@ DEFAULT_CONFIG = {
     "HEARTBEAT_ENABLED": True,
     "HEARTBEAT_INTERVAL_MIN": 15,
     "PAPER_START_BALANCE": 10000.0,
+    "PAPER_FEE_RATE": 0.001,
+    "PAPER_SLIPPAGE_RATE": 0.0005,
+    "PAPER_SPREAD_RATE": 0.0002,
+    "PAPER_ORDER_LATENCY_MS": 0,
     "DATA_PATH": "data",
     "STATE_FILE": "data/state.json",
     "RATE_LIMIT_SLEEP": 0.5,
@@ -89,15 +100,6 @@ DEFAULT_CONFIG = {
 def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     """Load configuration. Search order: provided path, CWD config.json, script-dir config.json."""
     cfg = DEFAULT_CONFIG.copy()
-    # env overrides first
-    for k in cfg:
-        if os.getenv(k) is not None:
-            val = os.getenv(k)
-            try:
-                cfg[k] = json.loads(val)
-            except Exception:
-                cfg[k] = val
-
     candidates: List[str] = []
     if path:
         candidates.append(path)
@@ -126,6 +128,17 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
                     logger.exception("Failed to load config from %s", p)
                 else:
                     print(f"Failed to load config from {p}")
+    # Environment always wins over tracked configuration.
+    aliases = {"API_KEY": "BINANCE_API_KEY", "API_SECRET": "BINANCE_API_SECRET"}
+    for k in cfg:
+        env_key = aliases.get(k, k)
+        if os.getenv(env_key) is not None:
+            val = os.getenv(env_key)
+            try:
+                cfg[k] = json.loads(val)
+            except (TypeError, json.JSONDecodeError):
+                cfg[k] = val
+    safety.validate_config(cfg)
     return cfg
 
 
@@ -353,11 +366,22 @@ class ExchangeManager:
     @retry_backoff()
     def create_market_order(self, symbol: str, side: str, amount: float) -> Dict[str, Any]:
         sym = normalize_symbol(symbol)
-        if self.cfg.get("PAPER_MODE") or not (self.cfg.get("API_KEY") and self.cfg.get("API_SECRET")):
-            # Simulate order
-            logger.info("Paper: Simulate %s %s %f", side, sym, amount)
-            return {"id": f"paper_{int(time.time()*1000)}", "symbol": sym, "side": side, "amount": amount, "status": "closed"}
+        safety.validate_config(self.cfg)
+        if self.cfg.get("PAPER_MODE"):
+            raise RuntimeError("Paper orders must use ExecutionEngine; live endpoint blocked")
         return self.exchange.create_order(sym, "market", side, amount)
+
+    def create_protective_stop(self, symbol: str, amount: float, stop_price: float) -> Dict[str, Any]:
+        """Place an exchange-held stop for an already-filled long position."""
+        if self.cfg.get("PAPER_MODE"):
+            raise RuntimeError("Native protective stops apply to live positions only")
+        if not self.cfg.get("NATIVE_PROTECTIVE_STOPS"):
+            raise RuntimeError("Native protective stops have not been verified for this exchange/account")
+        sym = normalize_symbol(symbol)
+        stop = self.round_price(sym, stop_price)
+        # CCXT exchanges map this unified trigger through exchange-specific params.
+        return self.exchange.create_order(sym, "stop_loss_limit", "sell", amount, stop,
+                                          {"stopPrice": stop, "reduceOnly": True})
 
 
 def cfg_exchange_class(name: str):
@@ -506,6 +530,7 @@ class Position:
     take_profit: Optional[float]
     trailing_pct: Optional[float]
     open_ts: float
+    protective_order_id: Optional[str] = None
 
 
 class TradeManager:
@@ -516,6 +541,9 @@ class TradeManager:
         self.circuit_breaker = circuit_breaker
         self.open_positions: Dict[str, Position] = {}
         self.lock = threading.Lock()
+        self.initial_equity = float(cfg.get("PAPER_START_BALANCE", 10000.0))
+        self.day_start_equity = self.initial_equity
+        self.equity_day = time.strftime("%Y-%m-%d")
         # persistent state file
         self.state_file = cfg.get("STATE_FILE", os.path.join(cfg.get("DATA_PATH", "data"), "state.json"))
         # try load previous state
@@ -533,6 +561,8 @@ class TradeManager:
         # Try fetch balance from exchange if credentials available
         try:
             if self.cfg.get("PAPER_MODE"):
+                if hasattr(self, "exec_engine") and self.exec_engine is not None:
+                    return float(self.exec_engine.paper_account()["cash"])
                 return float(self.cfg.get("PAPER_START_BALANCE", 10000.0))
             bal = self.ex.exchange.fetch_balance()
             for candidate in ["USDT", "USD", "EUR"]:
@@ -590,6 +620,7 @@ class TradeManager:
                         "take_profit": pos.take_profit,
                         "trailing_pct": pos.trailing_pct,
                         "open_ts": pos.open_ts,
+                        "protective_order_id": pos.protective_order_id,
                     }
             with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -601,7 +632,13 @@ class TradeManager:
         upnl = self.unrealized_pnl()
         with self.lock:
             open_count = len(self.open_positions)
-        return {"balance": bal, "open_positions": open_count, "unrealized_pnl": upnl}
+        result = {"balance": bal, "open_positions": open_count, "unrealized_pnl": upnl}
+        if self.cfg.get("PAPER_MODE") and hasattr(self, "exec_engine") and self.exec_engine is not None:
+            result.update(self.exec_engine.paper_account())
+            result["net_equity"] = result["cash"] + sum(
+                float(v) for v in self.exec_engine.paper_gross_basis.values()
+            ) + upnl
+        return result
 
     def calc_qty_by_risk(self, balance: float, risk_pct: float, entry_price: float, stop_price: float) -> float:
         risk_amount = balance * float(risk_pct)
@@ -611,16 +648,38 @@ class TradeManager:
         qty = risk_amount / stop_distance
         return float(np.floor(qty * 1000000) / 1000000)
 
-    def open_position(self, symbol: str, side: str, entry_price: float, stop_price: Optional[float], take_profit: Optional[float], trailing_pct: Optional[float]) -> Optional[Position]:
+    def open_position(self, symbol: str, side: str, entry_price: float, stop_price: Optional[float], take_profit: Optional[float], trailing_pct: Optional[float], risk_multiplier: float = 1.0) -> Optional[Position]:
+        if side.lower() != "buy":
+            logger.warning("Short selling is disabled: spot accounting is long-only")
+            return None
         balance = self.get_balance()
         if stop_price is None:
             logger.warning("Stop price required for risk calc; aborting trade")
             return None
-        qty = self.calc_qty_by_risk(balance, float(self.cfg.get("RISK_PER_TRADE", 0.01)), entry_price, stop_price)
+        risk_multiplier = min(1.0, max(0.0, float(risk_multiplier)))
+        qty = self.calc_qty_by_risk(balance, float(self.cfg.get("RISK_PER_TRADE", 0.01)) * risk_multiplier, entry_price, stop_price)
+        info = self.ex.get_market_info(symbol)
+        exchange_max = info.get("limits", {}).get("amount", {}).get("max")
+        fee_rate = float(self.cfg.get("PAPER_FEE_RATE", 0.001))
+        qty = cap_quantity(qty, balance, entry_price, fee_rate,
+                           float(self.cfg.get("MAX_POSITION_FRACTION", 1.0)), exchange_max)
+        qty = self.ex.round_amount(symbol, qty)
         if qty <= 0:
             logger.warning("Calculated qty <= 0; aborting")
             return None
+        today = time.strftime("%Y-%m-%d")
+        equity = float(self.summary().get("net_equity", balance))
         with self.lock:
+            if today != self.equity_day:
+                self.equity_day, self.day_start_equity = today, equity
+            existing = [position_risk(p.entry_price, p.stop_price, p.amount)
+                        for p in self.open_positions.values() if p.stop_price is not None]
+            decision = entry_guard(equity=equity, initial_equity=self.initial_equity,
+                day_start_equity=self.day_start_equity, proposed_risk=position_risk(entry_price, stop_price, qty),
+                existing_risks=existing, cfg=self.cfg)
+            if not decision.allowed:
+                logger.warning("Entry blocked: %s", decision.reason)
+                return None
             if len(self.open_positions) >= int(self.cfg.get("MAX_OPEN_POSITIONS", 3)):
                 logger.warning("Max open positions reached")
                 return None
@@ -634,15 +693,26 @@ class TradeManager:
                 try:
                     db_path = os.path.join(self.cfg.get("DATA_PATH", "data"), "mega_trades.db")
                     if hasattr(self, "exec_engine") and self.exec_engine is not None:
-                        res = self.exec_engine.create_order(symbol, side, qty)
+                        res = self.exec_engine.create_order(symbol, side, qty, price=entry_price)
                         pid = res.get("id", f"order_{int(time.time()*1000)}")
+                        entry_price = float(res.get("fill_price", entry_price))
                     else:
                         order = self.ex.create_market_order(symbol, side, qty)
                         pid = order.get("id", f"paper_{int(time.time()*1000)}")
                 except Exception:
                     logger.exception("Failed to place order via execution engine")
                     return None
-                pos = Position(pid, normalize_symbol(symbol), side, qty, entry_price, stop_price, take_profit, trailing_pct, time.time())
+                protective_id = None
+                if not self.cfg.get("PAPER_MODE"):
+                    try:
+                        protective = self.ex.create_protective_stop(symbol, qty, stop_price)
+                        protective_id = str(protective.get("id"))
+                    except Exception:
+                        logger.exception("Native protective stop failed; flattening live entry")
+                        self.exec_engine.create_order(symbol, "sell", qty, price=entry_price)
+                        return None
+                pos = Position(pid, normalize_symbol(symbol), side, qty, entry_price, stop_price,
+                               take_profit, trailing_pct, time.time(), protective_id)
                 self.open_positions[pid] = pos
                 # send enriched telegram message
                 msg = (
@@ -706,9 +776,15 @@ class TradeManager:
             except Exception:
                 logger.exception("Failed to fetch ticker for exit price; using entry as exit")
                 exit_price = pos.entry_price
-            self.ex.create_market_order(pos.symbol, side, pos.amount)
+            if hasattr(self, "exec_engine") and self.exec_engine is not None:
+                result = self.exec_engine.create_order(pos.symbol, side, pos.amount, price=exit_price)
+                exit_price = float(result.get("fill_price", exit_price))
+            else:
+                self.ex.create_market_order(pos.symbol, side, pos.amount)
             # compute pnl
-            if pos.side.lower() == "buy":
+            if 'result' in locals() and result.get("net_profit") is not None:
+                pnl = float(result["net_profit"])
+            elif pos.side.lower() == "buy":
                 pnl = (exit_price - pos.entry_price) * pos.amount
             else:
                 pnl = (pos.entry_price - exit_price) * pos.amount
@@ -900,32 +976,21 @@ class WatchdogThread(threading.Thread):
 # -------------------- Backtester --------------------
 
 class Backtester:
+    """Compatibility wrapper; all simulation is delegated to backtesting/."""
     def __init__(self, ohlcv: pd.DataFrame, cfg: Dict[str, Any]):
-        self.ohlcv = ohlcv.copy()
+        self.ohlcv = ohlcv.reset_index().rename(columns={ohlcv.index.name or "index": "timestamp"}) if "timestamp" not in ohlcv.columns else ohlcv.copy()
         self.cfg = cfg
         self.trades: List[Dict[str, Any]] = []
 
     def run_strategy(self, strategy_fn) -> Dict[str, Any]:
-        cash = float(self.cfg.get("BACKTEST_START_BALANCE", 10000.0))
-        pos = None
-        for idx in range(len(self.ohlcv)):
-            window = self.ohlcv.iloc[: idx + 1]
-            signal = strategy_fn(window)
-            price = float(window.close.iloc[-1])
-            if signal == "buy" and pos is None:
-                pos = {"entry_price": price, "size": cash / price}
-                logger.debug("Backtest buy at %s", price)
-            elif signal == "sell" and pos is not None:
-                pnl = (price - pos["entry_price"]) * pos["size"]
-                cash += pnl
-                self.trades.append({"entry": pos["entry_price"], "exit": price, "pnl": pnl})
-                pos = None
-        if pos is not None:
-            last = float(self.ohlcv.close.iloc[-1])
-            pnl = (last - pos["entry_price"]) * pos["size"]
-            cash += pnl
-            self.trades.append({"entry": pos["entry_price"], "exit": last, "pnl": pnl})
-        return self._metrics(cash)
+        from backtesting.engine import BacktestEngine
+        from backtesting.models import BacktestConfig
+        config = BacktestConfig(starting_balance=float(self.cfg.get("BACKTEST_START_BALANCE", 10000)),
+            fee_rate=float(self.cfg.get("PAPER_FEE_RATE", .001)), spread_rate=float(self.cfg.get("PAPER_SPREAD_RATE", .0002)),
+            slippage_rate=float(self.cfg.get("PAPER_SLIPPAGE_RATE", .0005)))
+        result = BacktestEngine(self.ohlcv, config).run(strategy_fn)
+        self.trades = [trade.to_dict() for trade in result.trades]
+        return result.metrics
 
     def _metrics(self, final_cash: float) -> Dict[str, Any]:
         returns = [t["pnl"] for t in self.trades]
@@ -1158,6 +1223,7 @@ def main_loop(cfg: Dict[str, Any]):
     interval = cfg.get("INTERVAL", "1m")
     strategy_name = cfg.get("STRATEGY", "macd")
     strategy_fn = strategy_macd if strategy_name == "macd" else (lambda w: strategy_xgb(w, model_mgr))
+    vibe_gate = VibeResearchGate(cfg)
 
     while True:
         try:
@@ -1179,14 +1245,32 @@ def main_loop(cfg: Dict[str, Any]):
                 df = ex_mgr.fetch_ohlcv(symbol, interval, limit=200)
             check_volatility_alert(df, cfg, tg)
             sig = strategy_fn(df)
+            if sig == "sell":
+                with trade_mgr.lock:
+                    long_ids = [p.id for p in trade_mgr.open_positions.values() if p.side.lower() == "buy"]
+                for pid in long_ids:
+                    trade_mgr.close_position(pid, "strategy_signal")
+                time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+                continue
             if sig:
+                allowed, regime, filter_reason = signal_allowed(df, sig, cfg)
+                if not allowed:
+                    logger.info("Signal filtered: signal=%s regime=%s reason=%s", sig, regime, filter_reason)
+                    time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+                    continue
+                vibe = vibe_gate.evaluate(symbol, interval, sig)
+                if not vibe.allowed:
+                    logger.info("Signal vetoed by VibeTrader: %s", vibe.reason)
+                    time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+                    continue
                 latest = float(df.close.iloc[-1])
                 atr_val = atr(df, int(cfg.get("ATR_PERIOD", 14))).iloc[-1]
                 if math.isnan(atr_val) or atr_val <= 0:
                     logger.warning("ATR invalid; skipping trade")
                 else:
                     stop_price = latest - float(cfg.get("ATR_MULTIPLIER", 1.5)) * atr_val if sig == "buy" else latest + float(cfg.get("ATR_MULTIPLIER", 1.5)) * atr_val
-                    pos = trade_mgr.open_position(symbol, "buy" if sig == "buy" else "sell", latest, stop_price, None, float(cfg.get("TRAILING_PCT", 0.01)))
+                    pos = trade_mgr.open_position(symbol, "buy", latest, stop_price, None,
+                                                  float(cfg.get("TRAILING_PCT", 0.01)), vibe.risk_multiplier)
                     if pos:
                         logger.info("Trade opened: %s", pos)
             time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
@@ -1228,6 +1312,75 @@ def test_calc_qty():
 
 
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] in ("research-run", "research-status", "research-validate"):
+        from research.factory import request_from_config
+        from research.manager import ResearchManager
+        command = sys.argv[1]
+        parser = argparse.ArgumentParser(prog=f"mega_trading_bot.py {command}")
+        parser.add_argument("artifact", nargs="?", help="Raw artifact for research-validate")
+        parser.add_argument("--strategy", default="macd")
+        parser.add_argument("--symbol")
+        parser.add_argument("--timeframe")
+        parser.add_argument("--config")
+        cli = parser.parse_args(sys.argv[2:]); cfg = load_config(cli.config)
+        manager = ResearchManager(cfg, audit_db=os.path.join(cfg.get("DATA_PATH", "data"), "mega_trades.db"))
+        if command == "research-status": print(json.dumps(manager.status(), indent=2)); raise SystemExit(0)
+        request_model = request_from_config(cfg, cli.strategy, cli.symbol, cli.timeframe)
+        if command == "research-validate":
+            if not cli.artifact: parser.error("research-validate requires an artifact path")
+            print(json.dumps(manager.validate_file(cli.artifact, strategy=strategy_macd), indent=2)); raise SystemExit(0)
+        approval = manager.run(request_model, strategy_macd)
+        print(json.dumps(approval, indent=2)); raise SystemExit(0)
+    if len(sys.argv) > 1 and sys.argv[1] in ("backtest", "compare-strategies"):
+        from backtesting.comparison import compare_strategies
+        from backtesting.data_loader import load_csv
+        from backtesting.engine import BacktestEngine
+        from backtesting.models import BacktestConfig
+        from backtesting.reports import export_csv, export_json
+
+        command = sys.argv[1]
+        parser = argparse.ArgumentParser(prog=f"mega_trading_bot.py {command}")
+        parser.add_argument("--strategy", default="macd")
+        parser.add_argument("--symbol", required=True)
+        parser.add_argument("--timeframe", required=True)
+        parser.add_argument("--data", required=True)
+        parser.add_argument("--starting-balance", type=float, default=10000)
+        parser.add_argument("--fee-rate", type=float, default=0.001)
+        parser.add_argument("--spread-rate", type=float, default=0.0002)
+        parser.add_argument("--slippage-rate", type=float, default=0.0005)
+        parser.add_argument("--latency-candles", type=int, default=0)
+        parser.add_argument("--risk-fraction", type=float, default=1.0)
+        parser.add_argument("--stop-loss", type=float)
+        parser.add_argument("--take-profit", type=float)
+        parser.add_argument("--trailing-stop", type=float)
+        parser.add_argument("--minimum-position-size", type=float, default=0.0)
+        parser.add_argument("--output", help="Output path (.json or .csv)")
+        cli = parser.parse_args(sys.argv[2:])
+        data = load_csv(cli.data)
+        config = BacktestConfig(strategy=cli.strategy, symbol=cli.symbol, timeframe=cli.timeframe,
+            starting_balance=cli.starting_balance, fee_rate=cli.fee_rate, spread_rate=cli.spread_rate,
+            slippage_rate=cli.slippage_rate, latency_candles=cli.latency_candles,
+            risk_fraction=cli.risk_fraction, stop_loss_pct=cli.stop_loss,
+            take_profit_pct=cli.take_profit, trailing_stop_pct=cli.trailing_stop,
+            minimum_position_size=cli.minimum_position_size)
+        registry = {"macd": strategy_macd}
+        if command == "backtest":
+            if cli.strategy not in registry:
+                parser.error(f"unknown or unavailable strategy: {cli.strategy}")
+            result = BacktestEngine(data, config).run(registry[cli.strategy])
+            payload = result
+            print(json.dumps(result.metrics, indent=2, default=str))
+        else:
+            ranking = compare_strategies(data, config, registry)
+            payload = {"configuration": vars(config), "ranking": [
+                {k: v for k, v in row.items() if k != "result"} for row in ranking],
+                "metadata": {"scoring": "trade-count penalty * (return 30%, drawdown 25%, profit factor 20%, Sharpe 15%, consistency 10%)"}}
+            print(json.dumps(payload["ranking"], indent=2, default=str))
+        if cli.output:
+            (export_json if cli.output.lower().endswith(".json") else export_csv)(payload, cli.output)
+        raise SystemExit(0)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to config.json")
     parser.add_argument("--test-telegram", action="store_true", help="Run Telegram getUpdates and send test message")

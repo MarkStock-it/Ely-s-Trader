@@ -29,12 +29,7 @@ def test_export_roundtrip(tmp_path):
     out_dir = str(tmp_path / "exports")
     # export tables
     for t in ("orders","fills","events","idempotency"):
-        try:
-            path = exporter.export_table(db_file, t, out_dir)
-            assert os.path.exists(path)
-            with open(path,'r',encoding='utf-8') as f:
-                content = f.read()
-                assert len(content) > 0
-        except Exception:
-            # idempotency may be empty but export should not crash
-            pass
+        path = exporter.export_table(db_file, t, out_dir)
+        assert os.path.exists(path)
+        with open(path,'r',encoding='utf-8') as f:
+            assert f.read().strip()

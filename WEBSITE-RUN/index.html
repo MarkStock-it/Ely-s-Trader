@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ely's Trader - Trading Terminal</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1 class="logo">Ely's Trader</h1>
+            </div>
+            <nav class="nav-menu">
+                <a href="#dashboard" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-label">Dashboard</span>
+                </a>
+                <a href="#strategies" class="nav-item" data-page="strategies">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">Strategies</span>
+                </a>
+                <a href="#portfolio" class="nav-item" data-page="portfolio">
+                    <span class="nav-icon">💼</span>
+                    <span class="nav-label">Portfolio</span>
+                </a>
+                <a href="#backtesting" class="nav-item" data-page="backtesting">
+                    <span class="nav-icon">📈</span>
+                    <span class="nav-label">Backtesting</span>
+                </a>
+                <a href="#logs" class="nav-item" data-page="logs">
+                    <span class="nav-icon">📝</span>
+                    <span class="nav-label">Logs</span>
+                </a>
+                <a href="#control-center" class="nav-item" data-page="control-center">
+                    <span class="nav-icon">🎛️</span>
+                    <span class="nav-label">Control Center</span>
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Page -->
+            <section id="dashboard" class="page active">
+                <div class="page-header">
+                    <h2>Dashboard</h2>
+                    <span class="timestamp" id="timestamp"></span>
+                </div>
+
+                <!-- Status Cards -->
+                <div class="cards-grid">
+                    <div class="card status-card">
+                        <div class="card-header">Bot Status</div>
+                        <div class="card-value status-indicator" id="bot-status">Idle</div>
+                        <div class="card-subtext">System ready</div>
+                    </div>
+
+                    <div class="card status-card">
+                        <div class="card-header">Execution Mode</div>
+                        <div class="card-value" id="execution-mode">Paper</div>
+                        <div class="card-subtext">Simulated trading</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Balance</div>
+                        <div class="card-value currency" id="balance">$10,000.00</div>
+                        <div class="card-subtext">Current funds</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Equity</div>
+                        <div class="card-value currency" id="equity">$10,000.00</div>
+                        <div class="card-subtext">Total value</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Daily P/L</div>
+                        <div class="card-value" id="daily-pl">$0.00</div>
+                        <div class="card-subtext" id="daily-pl-pct">(0%)</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Win Rate</div>
+                        <div class="card-value" id="win-rate">--</div>
+                        <div class="card-subtext">Recent trades</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Profit Factor</div>
+                        <div class="card-value" id="profit-factor">--</div>
+                        <div class="card-subtext">Gross profit / loss</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Drawdown</div>
+                        <div class="card-value" id="drawdown">0%</div>
+                        <div class="card-subtext">Max decline</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">Open Positions</div>
+                        <div class="card-value" id="open-positions">0</div>
+                        <div class="card-subtext">Active trades</div>
+                    </div>
+
+                    <div class="card metric-card">
+                        <div class="card-header">System Health</div>
+                        <div class="card-value health-status" id="system-health">✓ Good</div>
+                        <div class="card-subtext">All systems nominal</div>
+                    </div>
+                </div>
+
+                <!-- Recent Trades -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Recent Trades</h3>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Symbol</th>
+                                    <th>Side</th>
+                                    <th>Entry</th>
+                                    <th>Exit</th>
+                                    <th>P/L</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-trades">
+                                <tr class="empty-state">
+                                    <td colspan="7">No trades yet</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Warnings & Alerts -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Recent Warnings</h3>
+                    </div>
+                    <div id="warnings-list" class="warnings-list">
+                        <div class="empty-state">No warnings</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Strategies Page -->
+            <section id="strategies" class="page">
+                <div class="page-header">
+                    <h2>Strategies</h2>
+                </div>
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Active Strategies</h3>
+                    </div>
+                    <div class="strategies-list">
+                        <div class="strategy-card">
+                            <div class="strategy-header">
+                                <h4>Moving Average Crossover</h4>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="strategy-mac" name="strategy-mac" checked>
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="strategy-info">
+                                <div class="info-row">
+                                    <span class="label">Fast MA:</span>
+                                    <input type="number" value="12" class="input-small">
+                                </div>
+                                <div class="info-row">
+                                    <span class="label">Slow MA:</span>
+                                    <input type="number" value="26" class="input-small">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="strategy-card">
+                            <div class="strategy-header">
+                                <h4>RSI Divergence</h4>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="strategy-rsi" name="strategy-rsi">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="strategy-info">
+                                <div class="info-row">
+                                    <span class="label">Period:</span>
+                                    <input type="number" value="14" class="input-small">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="strategy-card">
+                            <div class="strategy-header">
+                                <h4>XGBoost Classifier</h4>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="strategy-xgboost" name="strategy-xgboost">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="strategy-info">
+                                <div class="info-row">
+                                    <span class="label">Confidence:</span>
+                                    <input type="number" value="0.6" min="0" max="1" step="0.05" class="input-small">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="strategy-card">
+                            <div class="strategy-header">
+                                <h4>LSTM Neural Network</h4>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="strategy-lstm" name="strategy-lstm">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <div class="strategy-info">
+                                <div class="info-row">
+                                    <span class="label">Lookback:</span>
+                                    <input type="number" value="60" class="input-small">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Portfolio Page -->
+            <section id="portfolio" class="page">
+                <div class="page-header">
+                    <h2>Portfolio</h2>
+                </div>
+
+                <!-- Asset Allocation -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Holdings</h3>
+                    </div>
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Symbol</th>
+                                    <th>Quantity</th>
+                                    <th>Entry Price</th>
+                                    <th>Current Price</th>
+                                    <th>Value</th>
+                                    <th>P/L</th>
+                                    <th>%</th>
+                                </tr>
+                            </thead>
+                            <tbody id="holdings-table">
+                                <tr class="empty-state">
+                                    <td colspan="7">No positions</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Chart Placeholder -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Allocation</h3>
+                    </div>
+                    <div class="chart-placeholder">
+                        <div class="placeholder-text">Portfolio allocation chart (pie chart)</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Backtesting Page -->
+            <section id="backtesting" class="page">
+                <div class="page-header">
+                    <h2>Backtesting</h2>
+                </div>
+
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Run Backtest</h3>
+                    </div>
+                    <div class="form-group">
+                        <label for="backtest-symbol">Symbol</label>
+                        <input type="text" id="backtest-symbol" name="backtest-symbol" placeholder="e.g., BTC/USDT" class="form-input">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="backtest-start-date">Start Date</label>
+                            <input type="date" id="backtest-start-date" name="backtest-start-date" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="backtest-end-date">End Date</label>
+                            <input type="date" id="backtest-end-date" name="backtest-end-date" class="form-input">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="backtest-timeframe">Timeframe</label>
+                            <select id="backtest-timeframe" name="backtest-timeframe" class="form-input">
+                                <option value="1m">1 minute</option>
+                                <option value="5m">5 minutes</option>
+                                <option value="15m">15 minutes</option>
+                                <option value="1h">1 hour</option>
+                                <option value="4h">4 hours</option>
+                                <option value="1d" selected>1 day</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="backtest-initial-balance">Initial Balance</label>
+                            <input type="number" id="backtest-initial-balance" name="backtest-initial-balance" value="10000" class="form-input">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="run-backtest-btn">Run Backtest</button>
+                </div>
+
+                <!-- Results -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Results</h3>
+                    </div>
+                    <div id="backtest-results" class="backtest-results">
+                        <div class="empty-state">Run a backtest to see results</div>
+                    </div>
+                </div>
+
+                <!-- Chart Placeholders -->
+                <div class="section">
+                    <div class="chart-placeholder">
+                        <div class="placeholder-text">Equity curve</div>
+                    </div>
+                </div>
+                <div class="section">
+                    <div class="chart-placeholder">
+                        <div class="placeholder-text">Drawdown chart</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Logs Page -->
+            <section id="logs" class="page">
+                <div class="page-header">
+                    <h2>Logs</h2>
+                    <button class="btn btn-secondary" id="clear-logs-btn">Clear Logs</button>
+                </div>
+
+                <div class="section">
+                    <div class="log-controls">
+                        <select id="log-filter" name="log-filter" class="form-input">
+                            <option value="all">All Levels</option>
+                            <option value="error">Errors</option>
+                            <option value="warning">Warnings</option>
+                            <option value="info">Info</option>
+                            <option value="debug">Debug</option>
+                        </select>
+                    </div>
+                    <div class="log-container" id="logs-list">
+                        <div class="empty-state">No logs</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Control Center Page -->
+            <section id="control-center" class="page">
+                <div class="page-header">
+                    <h2>Control Center</h2>
+                </div>
+
+                <!-- Bot Controls -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Bot Controls</h3>
+                    </div>
+                    <div class="control-row">
+                        <button class="btn btn-success" id="start-bot-btn">Start Bot</button>
+                        <button class="btn btn-warning" id="stop-bot-btn">Stop Bot</button>
+                        <button class="btn btn-secondary" id="restart-bot-btn">Restart</button>
+                        <button class="btn btn-danger" id="emergency-stop-btn">🔴 Emergency Stop</button>
+                    </div>
+                </div>
+
+                <!-- Mode Selection -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Execution Mode</h3>
+                    </div>
+                    <div class="radio-group">
+                        <label class="radio-label">
+                            <input type="radio" name="execution-mode" value="paper" id="mode-paper" checked>
+                            <span class="radio-custom"></span>
+                            Paper Trading
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="execution-mode" value="live" id="mode-live">
+                            <span class="radio-custom"></span>
+                            Live Trading
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Account Settings -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Account Settings</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="initial-paper-balance">Initial Paper Balance</label>
+                            <input type="number" id="initial-paper-balance" name="initial-paper-balance" value="10000" class="form-input">
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" id="reset-paper-btn">Reset Paper Account</button>
+                </div>
+
+                <!-- Trading Parameters -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Trading Parameters</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="fee-percent">Fee (%)</label>
+                            <input type="number" id="fee-percent" name="fee-percent" value="0.1" step="0.01" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="spread-percent">Spread (%)</label>
+                            <input type="number" id="spread-percent" name="spread-percent" value="0.05" step="0.01" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="slippage-percent">Slippage (%)</label>
+                            <input type="number" id="slippage-percent" name="slippage-percent" value="0.02" step="0.01" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="latency-ms">Latency (ms)</label>
+                            <input type="number" id="latency-ms" name="latency-ms" value="0" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Management -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Risk Management</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="risk-per-trade">Risk per Trade (%)</label>
+                            <input type="number" id="risk-per-trade" name="risk-per-trade" value="1" step="0.1" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="max-position-size">Max Position Size ($)</label>
+                            <input type="number" id="max-position-size" name="max-position-size" value="5000" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="max-open-positions">Max Open Positions</label>
+                            <input type="number" id="max-open-positions" name="max-open-positions" value="5" class="form-input">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="daily-loss-limit">Daily Loss Limit ($)</label>
+                            <input type="number" id="daily-loss-limit" name="daily-loss-limit" value="-2000" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="max-drawdown">Max Drawdown (%)</label>
+                            <input type="number" id="max-drawdown" name="max-drawdown" value="20" step="0.1" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Entry/Exit Settings -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Entry/Exit Settings</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="stop-loss-percent">Stop Loss (%)</label>
+                            <input type="number" id="stop-loss-percent" name="stop-loss-percent" value="2" step="0.1" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="take-profit-percent">Take Profit (%)</label>
+                            <input type="number" id="take-profit-percent" name="take-profit-percent" value="5" step="0.1" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Models -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>AI Models</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-col">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="xgboost-enabled" name="xgboost-enabled">
+                                <span class="toggle-slider"></span>
+                                XGBoost Classifier
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label for="xgboost-threshold">Confidence Threshold</label>
+                            <input type="number" id="xgboost-threshold" name="xgboost-threshold" value="0.6" min="0" max="1" step="0.05" class="form-input">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-col">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="lstm-enabled" name="lstm-enabled">
+                                <span class="toggle-slider"></span>
+                                LSTM Neural Network
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Exchange Configuration -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Exchange Configuration</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="exchange-select">Exchange</label>
+                            <select id="exchange-select" name="exchange-select" class="form-input">
+                                <option value="binance">Binance</option>
+                                <option value="coinbase">Coinbase</option>
+                                <option value="kraken">Kraken</option>
+                                <option value="bybit">Bybit</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="api-key">API Key</label>
+                            <input type="password" id="api-key" name="api-key" placeholder="Your API key" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="api-secret">API Secret</label>
+                            <input type="password" id="api-secret" name="api-secret" placeholder="Your API secret" class="form-input">
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" id="test-connection-btn">Test Connection</button>
+                </div>
+
+                <!-- Trading Symbols -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Trading Configuration</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="symbols">Symbols (comma-separated)</label>
+                            <input type="text" id="symbols" name="symbols" placeholder="e.g., BTC/USDT, ETH/USDT" class="form-input">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="timeframe">Timeframe</label>
+                            <select id="timeframe" name="timeframe" class="form-input">
+                                <option value="1m">1 minute</option>
+                                <option value="5m">5 minutes</option>
+                                <option value="15m">15 minutes</option>
+                                <option value="1h">1 hour</option>
+                                <option value="4h">4 hours</option>
+                                <option value="1d" selected>1 day</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="refresh-interval">Refresh Interval (seconds)</label>
+                            <input type="number" id="refresh-interval" name="refresh-interval" value="60" min="1" class="form-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Notifications -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>Notifications</h3>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group flex-col">
+                            <label class="toggle-label">
+                                <input type="checkbox" id="telegram-enabled" name="telegram-enabled">
+                                <span class="toggle-slider"></span>
+                                Telegram Notifications
+                            </label>
+                            <div class="status-indicator" id="telegram-status">Disabled</div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="telegram-token">Telegram Token</label>
+                            <input type="password" id="telegram-token" name="telegram-token" placeholder="Bot token" class="form-input">
+                        </div>
+                        <div class="form-group">
+                            <label for="telegram-chat-id">Chat ID</label>
+                            <input type="text" id="telegram-chat-id" name="telegram-chat-id" placeholder="Chat ID" class="form-input">
+                        </div>
+                    </div>
+                    <button class="btn btn-secondary" id="test-telegram-btn">Test Notification</button>
+                </div>
+
+                <div class="section">
+                    <div class="section-header"><h3>Research Gate</h3></div>
+                    <div id="research-gate-status" class="empty-state">Loading research status...</div>
+                    <div class="control-row">
+                        <button class="btn btn-primary" id="run-research-btn">Run Research</button>
+                        <input class="form-input" id="research-artifact" placeholder="raw artifact filename.json">
+                        <button class="btn btn-secondary" id="validate-research-btn">Validate Artifact</button>
+                        <button class="btn btn-danger" id="disable-research-btn">Disable Gate</button>
+                    </div>
+                </div>
+
+                <!-- System Actions -->
+                <div class="section">
+                    <div class="section-header">
+                        <h3>System</h3>
+                    </div>
+                    <div class="control-row">
+                        <button class="btn btn-secondary" id="test-connection-btn2">Test Connection</button>
+                        <button class="btn btn-danger" id="reset-all-btn">Reset All Settings</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
