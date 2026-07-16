@@ -1,0 +1,14 @@
+ccxt
+pandas
+numpy
+requests
+python-dotenv
+xgboost
+tensorflow
+textblob
+flask
+pytest
+prometheus-client
+websocket-client
+python-json-logger
+

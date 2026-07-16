@@ -1,0 +1,34 @@
+version: '3.7'
+services:
+  app:
+    build: .
+    command: python -m TRADE.mega_trading_bot
+    ports:
+      - "8080:8080" # web_ui metrics
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prom
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - alertmanager
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./ops/grafana:/var/lib/grafana
+    depends_on:
+      - prometheus
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./ops/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./ops/alertmanager_templates:/etc/alertmanager/templates:ro

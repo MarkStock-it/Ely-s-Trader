@@ -1,0 +1,56 @@
+groups:
+  - name: mega_trading_bot.rules
+    rules:
+      - alert: ExecutionFailuresHigh
+        expr: increase(mtb_order_failures_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High rate of execution failures"
+          description: "{{ $value }} order failures in the last 5 minutes. Check exchange connectivity and circuit-breaker status."
+
+      - alert: PositionMonitorErrors
+        expr: increase(mtb_position_monitor_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Position monitor errors detected"
+          description: "PositionMonitor reported errors in the last 5 minutes. Check logs and watchdog."
+
+      - alert: ReconcilerStale
+        expr: time() - mtb_last_reconcile_timestamp > 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order reconciler stale"
+          description: "OrderReconciler hasn't run in the last 5 minutes. Verify the reconciler thread."
+
+      - alert: HighOpenOrders
+        expr: mtb_open_orders > 50
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of open orders"
+          description: "There are more than 50 open orders; investigate for stuck orders or strategy runaway."
+
+      - alert: HighOpenPositions
+        expr: mtb_open_positions > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of open positions"
+          description: "There are more than 20 open positions; check risk engine and exposure."
+
+      - alert: NoMarketDataFetch
+        expr: increase(mtb_md_fetches_total[5m]) == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Market data fetch stalled"
+          description: "No market data has been fetched in the last 5 minutes. Check exchange connectivity and MarketDataManager."

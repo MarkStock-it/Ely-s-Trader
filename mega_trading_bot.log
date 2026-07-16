@@ -1,0 +1,27 @@
+2026-02-11 21:47:59,167 INFO Starting mega_trading_bot with config: {'PAPER_MODE': True, 'EXCHANGE': 'binance', 'SYMBOL': 'BTCUSDT', 'INTERVAL': '1m'}
+2026-02-11 21:47:59,173 INFO Position monitor started
+2026-02-11 21:49:24,138 INFO Interrupted by user; shutting down
+2026-02-11 21:50:12,275 INFO Starting mega_trading_bot with config: {'PAPER_MODE': True, 'EXCHANGE': 'binance', 'SYMBOL': 'BTCUSDT', 'INTERVAL': '1m'}
+2026-02-11 21:50:12,281 INFO Position monitor started
+2026-02-11 21:51:42,815 INFO Interrupted by user; shutting down
+2026-02-11 21:53:00,915 INFO Starting mega_trading_bot with config: {'PAPER_MODE': True, 'EXCHANGE': 'binance', 'SYMBOL': 'BTCUSDT', 'INTERVAL': '1m'}
+2026-02-11 21:53:00,922 INFO Position monitor started
+2026-02-11 21:55:00,091 INFO Interrupted by user; shutting down
+2026-02-11 23:46:05,956 INFO Loaded config from config.json
+2026-02-11 23:46:05,956 INFO Starting mega_trading_bot with config: {'PAPER_MODE': True, 'EXCHANGE': 'binance', 'SYMBOL': 'BTCUSDT', 'INTERVAL': '1m'}
+2026-02-11 23:46:07,118 INFO Position monitor started
+2026-02-11 23:46:07,119 INFO Heartbeat thread started
+2026-02-11 23:46:07,119 INFO Watchdog started
+2026-02-11 23:47:51,975 INFO Interrupted by user; shutting down
+{"asctime": "2026-07-16 20:51:03,529", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:03,712", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:03,912", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:04,113", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:04,313", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:04,513", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:04,558", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:04,758", "levelname": "DEBUG", "name": "mega_trading_bot", "message": "Failed to load markets for rounding info"}
+{"asctime": "2026-07-16 20:51:04,761", "levelname": "WARNING", "name": "mega_trading_bot.safety", "message": "CircuitBreaker recorded failure 1/2"}
+{"asctime": "2026-07-16 20:51:04,761", "levelname": "WARNING", "name": "mega_trading_bot.safety", "message": "CircuitBreaker recorded failure 2/2"}
+{"asctime": "2026-07-16 20:51:04,761", "levelname": "ERROR", "name": "mega_trading_bot.safety", "message": "CircuitBreaker open: 2 failures; in cooldown"}
+{"asctime": "2026-07-16 20:51:05,862", "levelname": "INFO", "name": "mega_trading_bot.safety", "message": "CircuitBreaker cooldown passed; allowing attempts"}

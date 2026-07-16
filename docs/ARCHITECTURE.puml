@@ -1,0 +1,20 @@
+@startuml
+package "TRADE Bot" {
+  [Strategy] --> [MarketDataManager]
+  [Strategy] --> [ExecutionEngine]
+  [ExecutionEngine] --> [SQLite DB]
+  [ExecutionEngine] --> [Exchange (ccxt)]
+  [OrderReconciler] --> [SQLite DB]
+  [OrderReconciler] --> [Exchange (ccxt)]
+  [PositionMonitor] --> [ExecutionEngine]
+  [MarketDataManager] --> [Backtester]
+  [Web UI] --> [SQLite DB]
+  [Web UI] --> [Prometheus]
+  [ExecutionEngine] --> [TelegramClient]
+}
+
+database "SQLite DB" as DB
+cloud "Exchange (ccxt)" as EX
+actor User
+User --> Web UI
+@enduml

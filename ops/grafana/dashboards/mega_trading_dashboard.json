@@ -1,0 +1,37 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Mega Trading Bot - Overview",
+    "panels": [
+      {
+        "type": "graph",
+        "title": "Order Failures",
+        "targets": [
+          { "expr": "increase(mtb_order_failures_total[5m])", "legendFormat": "failures (5m)" }
+        ],
+        "gridPos": { "x": 0, "y": 0, "w": 12, "h": 6 }
+      },
+      {
+        "type": "graph",
+        "title": "Open Orders",
+        "targets": [ { "expr": "mtb_open_orders", "legendFormat": "open_orders" } ],
+        "gridPos": { "x": 12, "y": 0, "w": 12, "h": 6 }
+      },
+      {
+        "type": "graph",
+        "title": "Open Positions",
+        "targets": [ { "expr": "mtb_open_positions", "legendFormat": "open_positions" } ],
+        "gridPos": { "x": 0, "y": 6, "w": 12, "h": 6 }
+      },
+      {
+        "type": "graph",
+        "title": "Market Data Fetches",
+        "targets": [ { "expr": "increase(mtb_md_fetches_total[5m])", "legendFormat": "md_fetches" } ],
+        "gridPos": { "x": 12, "y": 6, "w": 12, "h": 6 }
+      }
+    ],
+    "schemaVersion": 16,
+    "version": 0
+  },
+  "overwrite": true
+}

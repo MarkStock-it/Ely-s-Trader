@@ -1,0 +1,28 @@
+global:
+  resolve_timeout: 5m
+route:
+  receiver: 'slack-notifications'
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 3h
+  routes:
+    - receiver: 'pagerduty'
+      match:
+        severity: 'critical'
+      continue: false
+receivers:
+  - name: 'slack-notifications'
+    slack_configs:
+      - api_url: '${SLACK_WEBHOOK}'
+        channel: '#alerts'
+        title: '{{ .CommonAnnotations.summary }}'
+        text: '{{ .CommonAnnotations.description }}\nInstance: {{ .CommonLabels.instance }}'
+  - name: 'pagerduty'
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_INTEGRATION_KEY}'
+        severity: '{{ .CommonLabels.severity }}'
+        description: '{{ .CommonAnnotations.description }}'
+        details:
+          summary: '{{ .CommonAnnotations.summary }}'
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
