@@ -179,7 +179,7 @@ $('run-backtest-btn').onclick = async () => {
 $('run-tournament-btn').onclick = async () => {
     const button=$('run-tournament-btn'); button.disabled=true;
     try { const r=await api('/api/strategy-tournament',{method:'POST',body:JSON.stringify({symbol:$('backtest-symbol').value,timeframe:$('backtest-timeframe').value,initial_balance:Number($('backtest-initial-balance').value)})});
-      $('tournament-results').innerHTML=`<table><thead><tr><th>Rank</th><th>Strategy</th><th>Return</th><th>Drawdown</th><th>Win rate</th><th>PF</th><th>Sharpe</th><th>Trades</th><th>Score</th></tr></thead><tbody>${r.ranking.map(x=>`<tr><td>${x.rank}</td><td>${x.strategy}</td><td>${number(x.net_return)}%</td><td>${number(x.max_drawdown)}%</td><td>${number(x.win_rate)}%</td><td>${number(x.profit_factor)}</td><td>${number(x.sharpe)}</td><td>${x.trades}</td><td>${number(x.composite_score)}</td></tr>`).join('')}</tbody></table>`;
+      $('tournament-results').innerHTML=`<table><thead><tr><th>Rank</th><th>Strategy</th><th>Status</th><th>OOS return</th><th>Drawdown</th><th>Profitable windows</th><th>Degradation</th><th>Trades</th><th>Stability</th></tr></thead><tbody>${r.ranking.map(x=>`<tr><td>${x.rank}</td><td>${x.strategy}</td><td>${x.status}</td><td>${number(x.net_return)}%</td><td>${number(x.max_drawdown)}%</td><td>${number(x.profitable_window_pct)}%</td><td>${number(x.degradation_pct)}%</td><td>${x.trades}</td><td>${number(x.stability_score)}</td></tr>`).join('')}</tbody></table>`;
     } catch(e){$('tournament-results').innerHTML=`<div class="empty-state">${e.message}</div>`;} finally{button.disabled=false;}
 };
 $('reset-all-btn').onclick = async () => { if (!confirm('Reload saved settings and discard unsaved values?')) return; await loadConfig(); toast('Settings reloaded'); };
@@ -201,8 +201,18 @@ $('run-research-btn').onclick = async () => { try { await api('/api/research/run
 $('validate-research-btn').onclick = async () => { try { await api('/api/research/validate', {method:'POST', body:JSON.stringify({filename:$('research-artifact').value})}); toast('Artifact is valid'); refreshResearch(); } catch(e) { toast(e.message,true); } };
 $('disable-research-btn').onclick = async () => { try { await api('/api/research/disable', {method:'POST'}); toast('Research gate disabled'); refreshResearch(); } catch(e) { toast(e.message,true); } };
 
+async function refreshWalkforward() {
+    try {
+        const r = await api('/api/walkforward/status'); const rows = r.ranking || [];
+        const progress = r.total_windows ? `${r.completed_windows}/${r.total_windows}` : `${r.completed_windows || 0}`;
+        $('walkforward-status').innerHTML = `<div class="results-grid"><div><b>State</b><br>${r.state}</div><div><b>Completed windows</b><br>${progress}</div><div><b>Current strategy</b><br>${r.current_strategy || '--'}</div><div><b>Current window</b><br>${r.current_window || '--'}</div></div>${rows.length ? `<table><thead><tr><th>Strategy</th><th>Qualification</th><th>Stability</th><th>Degradation</th><th>Profitable windows</th></tr></thead><tbody>${rows.map(x=>`<tr><td>${x.strategy}</td><td>${x.status}</td><td>${number(x.stability_score)}</td><td>${number(x.degradation_pct)}%</td><td>${number(x.profitable_window_pct)}%</td></tr>`).join('')}</tbody></table>` : (r.error ? `<div class="empty-state">${r.error}</div>` : '')}`;
+    } catch(e) { $('walkforward-status').textContent = e.message; }
+}
+$('run-walkforward-btn').onclick = async () => { try { await api('/api/walkforward', {method:'POST', body:JSON.stringify({symbol:$('backtest-symbol').value,timeframe:$('backtest-timeframe').value,initial_balance:Number($('backtest-initial-balance').value),train_size:Number($('wf-train-size').value),validation_size:Number($('wf-validation-size').value),test_size:Number($('wf-test-size').value),step_size:Number($('wf-step-size').value)})}); toast('Walk-forward validation started'); refreshWalkforward(); } catch(e) { toast(e.message,true); } };
+
 function updateTimestamp() { $('timestamp').textContent = new Date().toLocaleString(); }
 updateTimestamp(); setInterval(updateTimestamp, 1000);
 loadConfig().catch(e => toast(e.message, true)); refreshStatus(); refreshLogs();
 refreshResearch(); setInterval(refreshResearch, 5000);
+refreshWalkforward(); setInterval(refreshWalkforward, 2000);
 setInterval(refreshStatus, 5000); setInterval(refreshLogs, 10000);

@@ -620,6 +620,22 @@
                     </div>
                 </div>
 
+                <div class="section">
+                    <div class="section-header"><h3>Walk-Forward Validation</h3></div>
+                    <div class="form-row">
+                        <div class="form-group"><label for="wf-train-size">Train candles</label><input class="form-input" id="wf-train-size" type="number" min="1" value="400"></div>
+                        <div class="form-group"><label for="wf-validation-size">Validation candles</label><input class="form-input" id="wf-validation-size" type="number" min="1" value="150"></div>
+                        <div class="form-group"><label for="wf-test-size">OOS candles</label><input class="form-input" id="wf-test-size" type="number" min="1" value="150"></div>
+                        <div class="form-group"><label for="wf-step-size">Shift candles</label><input class="form-input" id="wf-step-size" type="number" min="1" value="150"></div>
+                    </div>
+                    <div id="walkforward-status" class="empty-state">No validation run yet</div>
+                    <div class="control-row">
+                        <button class="btn btn-primary" id="run-walkforward-btn">Run Walk-Forward</button>
+                        <a class="btn btn-secondary" href="/api/walkforward/report/walkforward_summary.json">Download JSON</a>
+                        <a class="btn btn-secondary" href="/api/walkforward/report/walkforward_summary.csv">Download CSV</a>
+                    </div>
+                </div>
+
                 <!-- System Actions -->
                 <div class="section">
                     <div class="section-header">

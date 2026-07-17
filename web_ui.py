@@ -39,6 +39,8 @@ _process: subprocess.Popen | None = None
 _process_lock = threading.Lock()
 _research_job = {"state": "IDLE"}
 _research_lock = threading.Lock()
+_walkforward_job = {"state": "IDLE", "completed_windows": 0, "total_windows": 0}
+_walkforward_lock = threading.Lock()
 
 
 @APP.before_request
@@ -393,7 +395,7 @@ def strategy_tournament():
     timeframe = str(payload.get("timeframe") or "1h"); initial = float(payload.get("initial_balance") or 10000)
     try:
         import ccxt, pandas as pd
-        from backtesting.comparison import compare_strategies
+        from backtesting.comparison import compare_walkforward
         from backtesting.models import BacktestConfig
         from strategies.registry import default_registry
         cfg=load_config(); exchange=getattr(ccxt,cfg.get("EXCHANGE","binance"))({"enableRateLimit":True})
@@ -403,9 +405,76 @@ def strategy_tournament():
         config=BacktestConfig(symbol=symbol,timeframe=timeframe,starting_balance=initial,
             fee_rate=float(cfg.get("PAPER_FEE_RATE",.001)),spread_rate=float(cfg.get("PAPER_SPREAD_RATE",.0002)),
             slippage_rate=float(cfg.get("PAPER_SLIPPAGE_RATE",.0005)),risk_fraction=float(cfg.get("MAX_POSITION_FRACTION",1)))
-        ranking=compare_strategies(data,config,default_registry().enabled())
-        return jsonify(ranking=[{k:v for k,v in row.items() if k!="result"} for row in ranking],candles=len(data))
+        from walkforward.models import WalkForwardConfig
+        ranking,result=compare_walkforward(data,config,default_registry().enabled(),WalkForwardConfig(400,150,150,150))
+        return jsonify(ranking=ranking,candles=len(data),windows=len(result["windows"]))
     except Exception as exc: return jsonify(error=f"Tournament failed: {exc}"),502
+
+
+def _walkforward_inputs(payload):
+    import ccxt, pandas as pd
+    from backtesting.models import BacktestConfig
+    from walkforward.models import QualificationRules, WalkForwardConfig
+    cfg = load_config(); symbol = str(payload.get("symbol") or "BTC/USDT").upper()
+    timeframe = str(payload.get("timeframe") or "1h"); initial = float(payload.get("initial_balance") or 10000)
+    wf = WalkForwardConfig(int(payload.get("train_size", 400)), int(payload.get("validation_size", 150)),
+                           int(payload.get("test_size", 150)), int(payload.get("step_size", 150)))
+    needed = wf.train_size + wf.validation_size + wf.test_size
+    exchange = getattr(ccxt, cfg.get("EXCHANGE", "binance"))({"enableRateLimit": True})
+    rows = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=max(needed, min(2000, needed + wf.step_size * 4)))
+    data = pd.DataFrame(rows, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    data["timestamp"] = pd.to_datetime(data.timestamp, unit="ms", utc=True)
+    bt = BacktestConfig(symbol=symbol, timeframe=timeframe, starting_balance=initial,
+        fee_rate=float(cfg.get("PAPER_FEE_RATE", .001)), spread_rate=float(cfg.get("PAPER_SPREAD_RATE", .0002)),
+        slippage_rate=float(cfg.get("PAPER_SLIPPAGE_RATE", .0005)), risk_fraction=float(cfg.get("MAX_POSITION_FRACTION", 1)),
+        stop_loss_pct=_optional_fraction(cfg.get("STOP_LOSS_PERCENT")),
+        take_profit_pct=_optional_fraction(cfg.get("TAKE_PROFIT_PERCENT")))
+    rules = QualificationRules(int(payload.get("minimum_oos_trades", 5)),
+        float(payload.get("minimum_profit_factor", 1)), float(payload.get("maximum_drawdown_pct", 20)),
+        float(payload.get("maximum_losing_window_pct", 50)), float(payload.get("maximum_degradation_pct", 50)))
+    return data, bt, wf, rules
+
+
+def _optional_fraction(value):
+    value = float(value or 0)
+    return value / 100 if value > 0 else None
+
+
+@APP.post("/api/walkforward")
+def walkforward_start():
+    payload = request.get_json(silent=True) or {}
+    with _walkforward_lock:
+        if _walkforward_job.get("state") == "RUNNING": return jsonify(error="Walk-forward validation already running"), 409
+        _walkforward_job.clear(); _walkforward_job.update(state="RUNNING", completed_windows=0, total_windows=0,
+            started_at=datetime.now(timezone.utc).isoformat())
+    def worker():
+        try:
+            from backtesting.comparison import compare_walkforward
+            from strategies.registry import default_registry
+            from walkforward.report import write_reports
+            data, bt, wf, rules = _walkforward_inputs(payload)
+            def progress(completed, total, strategy, window):
+                with _walkforward_lock: _walkforward_job.update(completed_windows=completed, total_windows=total,
+                    current_strategy=strategy, current_window=window)
+            ranking, result = compare_walkforward(data, bt, default_registry().enabled(), wf, rules, progress)
+            paths = write_reports(result, ROOT / "reports")
+            outcome = {"state": "COMPLETED", "ranking": ranking, "reports": [Path(x).name for x in paths]}
+        except Exception as exc: outcome = {"state": "ERROR", "error": str(exc)}
+        with _walkforward_lock: _walkforward_job.update(outcome, finished_at=datetime.now(timezone.utc).isoformat())
+    threading.Thread(target=worker, daemon=True, name="walk-forward-validation").start()
+    return jsonify(state="RUNNING"), 202
+
+
+@APP.get("/api/walkforward/status")
+def walkforward_status():
+    with _walkforward_lock: return jsonify(dict(_walkforward_job))
+
+
+@APP.get("/api/walkforward/report/<name>")
+def walkforward_report(name):
+    if name not in ("walkforward_summary.json", "walkforward_summary.csv"):
+        return jsonify(error="Unknown walk-forward report"), 404
+    return send_from_directory(ROOT / "reports", name, as_attachment=True)
 
 
 @APP.get("/api/research/status")
