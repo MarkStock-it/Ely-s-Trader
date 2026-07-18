@@ -1,0 +1,12 @@
+{
+  "candle_count": 8766,
+  "dataset_file": "20220101T000000Z_20251231T200000Z_90c020876b386e1e.csv",
+  "dataset_hash": "90c020876b386e1e2d953d079b072aba6dd26dd4b6b42f47a600c5a84e3866d0",
+  "download_time": "2026-07-18T16:33:24.884715Z",
+  "end": "2025-12-31T20:00:00Z",
+  "exchange": "binance",
+  "schema_version": "1",
+  "start": "2022-01-01T00:00:00Z",
+  "symbol": "XRP/USDT",
+  "timeframe": "4h"
+}

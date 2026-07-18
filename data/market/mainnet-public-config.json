@@ -1,0 +1,9 @@
+{
+  "PAPER_MODE": true,
+  "LIVE_MODE": false,
+  "USE_TESTNET": false,
+  "EXCHANGE": "binance",
+  "API_KEY": "",
+  "API_SECRET": "",
+  "DATA_PATH": "data"
+}

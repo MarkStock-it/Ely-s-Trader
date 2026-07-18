@@ -1,0 +1,12 @@
+{
+  "candle_count": 8766,
+  "dataset_file": "20220101T000000Z_20251231T200000Z_a6f9d01de9097e10.csv",
+  "dataset_hash": "a6f9d01de9097e10f91fdb33674b1e2f0c3fef01fad9cd3885cd80810c66c7d6",
+  "download_time": "2026-07-18T16:32:17.341374Z",
+  "end": "2025-12-31T20:00:00Z",
+  "exchange": "binance",
+  "schema_version": "1",
+  "start": "2022-01-01T00:00:00Z",
+  "symbol": "ETH/USDT",
+  "timeframe": "4h"
+}
