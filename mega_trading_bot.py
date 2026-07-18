@@ -1407,6 +1407,68 @@ def test_calc_qty():
 
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) > 1 and sys.argv[1] in ("market-data-download", "market-data-validate", "market-data-list"):
+        command = sys.argv[1]
+        parser = argparse.ArgumentParser(prog=f"mega_trading_bot.py {command}")
+        parser.add_argument("--config", help="Path to config.json")
+        parser.add_argument("--root", default="data/market")
+        parser.add_argument("--symbol", action="append", choices=("BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"))
+        parser.add_argument("--timeframe", action="append", choices=("15m", "1h", "4h"))
+        if command == "market-data-download":
+            parser.add_argument("--start", required=True, help="UTC inclusive start")
+            parser.add_argument("--end", required=True, help="UTC inclusive end")
+            parser.add_argument("--limit", type=int, default=1000)
+        if command == "market-data-validate":
+            parser.add_argument("--hash", action="append", dest="hashes")
+            parser.add_argument("--run-walkforward", action="store_true")
+            parser.add_argument("--train-size", type=int, default=500)
+            parser.add_argument("--validation-size", type=int, default=200)
+            parser.add_argument("--test-size", type=int, default=200)
+            parser.add_argument("--step-size", type=int, default=200)
+            parser.add_argument("--output", help="Walk-forward JSON output path")
+        cli = parser.parse_args(sys.argv[2:])
+        from market_data import MarketDataStore, SUPPORTED_SYMBOLS, SUPPORTED_TIMEFRAMES, download_ohlcv
+        cfg = load_config(cli.config); market_store = MarketDataStore(cli.root)
+        symbols = cli.symbol or cfg.get("MARKET_DATA_SYMBOLS") or list(SUPPORTED_SYMBOLS)
+        timeframes = cli.timeframe or cfg.get("MARKET_DATA_TIMEFRAMES") or list(SUPPORTED_TIMEFRAMES)
+        if command == "market-data-download":
+            provider = ExchangeManager(cfg); downloaded = []
+            exchange_name = str(cfg.get("EXCHANGE", "binance"))
+            for market_symbol in symbols:
+                for market_timeframe in timeframes:
+                    downloaded.append(download_ohlcv(provider, market_store, exchange=exchange_name,
+                        symbol=market_symbol, timeframe=market_timeframe, start=cli.start,
+                        end=cli.end, limit=cli.limit))
+            print(json.dumps(downloaded, indent=2)); raise SystemExit(0)
+        catalog = market_store.list(symbols=set(symbols), timeframes=set(timeframes))
+        if command == "market-data-list":
+            print(json.dumps(catalog, indent=2)); raise SystemExit(0)
+        if cli.hashes: catalog = [x for x in catalog if x["dataset_hash"] in set(cli.hashes)]
+        if not catalog: raise FileNotFoundError("No matching local market datasets")
+        validated = []
+        for item in catalog:
+            _, metadata = market_store.load(item["metadata_path"])
+            validated.append(metadata)
+        if not cli.run_walkforward:
+            print(json.dumps(validated, indent=2)); raise SystemExit(0)
+        from walkforward.market_pipeline import run_market_walkforward
+        from walkforward.models import WalkForwardConfig
+        result = run_market_walkforward(market_store, symbols=symbols, timeframes=timeframes,
+            enabled_strategy_ids=cfg.get("ENABLED_STRATEGIES"), dataset_hashes=cli.hashes,
+            walkforward_config=WalkForwardConfig(cli.train_size, cli.validation_size, cli.test_size, cli.step_size))
+        from walkforward.report import _safe
+        output = cli.output or os.path.join("reports", f"market_walkforward_{result['run_hash'][:16]}.json")
+        os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+        report_content = json.dumps(_safe(result), indent=2, default=str, allow_nan=False) + "\n"
+        if os.path.exists(output):
+            with open(output, "r", encoding="utf-8") as handle:
+                if handle.read() != report_content:
+                    raise FileExistsError(f"Refusing to overwrite a different reproducible run: {output}")
+        else:
+            with open(output, "x", encoding="utf-8") as handle: handle.write(report_content)
+        print(json.dumps({"run_hash": result["run_hash"], "output": output,
+                          "datasets": len(result["datasets"]), "strategies": result["aggregated_strategies"]},
+                         indent=2, default=str)); raise SystemExit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "analytics-reconcile":
         parser = argparse.ArgumentParser(prog="mega_trading_bot.py analytics-reconcile")
         parser.add_argument("--config", help="Path to config.json")

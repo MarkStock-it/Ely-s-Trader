@@ -61,6 +61,12 @@ def load_csv(path: str, *, sort_unordered: bool = False) -> pd.DataFrame:
         raise ValueError(f"Invalid CSV: {exc}") from exc
 
 
+def load_market_dataset(metadata_or_hash: str, *, root: str = "data/market"):
+    """Deterministically reload a validated immutable dataset without network access."""
+    from market_data import MarketDataStore
+    return MarketDataStore(root).load(metadata_or_hash)
+
+
 def load_provider(provider: Any, symbol: str, timeframe: str, *, limit: int = 2000,
                   cache_dir: str = "data/backtesting") -> pd.DataFrame:
     """Download through the existing read-only provider and cache as CSV."""

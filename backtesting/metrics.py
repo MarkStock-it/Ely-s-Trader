@@ -2,6 +2,7 @@ import math
 from typing import Dict, List
 
 import numpy as np
+import pandas as pd
 
 
 def calculate_metrics(starting_balance: float, ending_equity: float, trades, equity,
@@ -50,7 +51,7 @@ def _max_streak(values: List[float], winning: bool) -> int:
 
 def _seconds(a, b):
     try:
-        return (np.datetime64(a) - np.datetime64(b)) / np.timedelta64(1, "s")
+        return (pd.Timestamp(a) - pd.Timestamp(b)).total_seconds()
     except Exception:
         try: return float(a) - float(b)
         except Exception: return 0.0
