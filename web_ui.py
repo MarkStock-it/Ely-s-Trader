@@ -276,9 +276,10 @@ def api_status():
     account = account_snapshot(cfg, fills, orders)
     logs = tail_logs(100)
     warnings = [x for x in logs if x["level"] in ("warning", "error")][-10:]
+    analytics_status = intelligence(cfg).status()
     return jsonify(running=process_running(), mode="paper" if cfg.get("PAPER_MODE") else "live",
                    account=account, open_orders=[o for o in orders if o.get("status") != "closed"],
-                   warnings=warnings, healthy=CFG_PATH.exists())
+                   warnings=warnings, healthy=CFG_PATH.exists(), analytics=analytics_status)
 
 
 @APP.post("/api/bot/<action>")

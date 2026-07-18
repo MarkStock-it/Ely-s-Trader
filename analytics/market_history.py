@@ -4,13 +4,18 @@ import time
 
 def store_market(tid, *, symbol, timeframe, regime=None, atr=None, volume=None,
                  volatility=None, trend_strength=None, timestamp=None, async_write=True):
-    values = (timestamp or time.time(), symbol, timeframe, regime, atr, volume, volatility, trend_strength)
-    def write():
-        with tid.connection() as con:
-            con.execute("""INSERT OR IGNORE INTO market_history
-             (timestamp,symbol,timeframe,regime,atr,volume,volatility,trend_strength)
-             VALUES (?,?,?,?,?,?,?,?)""", values)
-    return tid.submit(write) if async_write else (write() or True)
+    payload = {"timestamp": timestamp or time.time(), "symbol": symbol, "timeframe": timeframe,
+               "regime": regime, "atr": atr, "volume": volume, "volatility": volatility,
+               "trend_strength": trend_strength}
+    event_id = tid.deterministic_id("market", [payload["timestamp"], symbol, timeframe])
+    tid.enqueue("market", payload, event_id=event_id)
+    return True
+
+
+def apply_market(con, payload):
+    fields = ("timestamp", "symbol", "timeframe", "regime", "atr", "volume", "volatility", "trend_strength")
+    con.execute(f"INSERT OR IGNORE INTO market_history ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})",
+                [payload.get(x) for x in fields])
 
 
 def get_market_history(tid, *, symbol=None, timeframe=None, limit=1000, offset=0):

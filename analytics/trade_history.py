@@ -17,14 +17,17 @@ def store_trade(tid, trade: dict[str, Any], *, async_write: bool = True) -> bool
                             "gross_pnl", "net_pnl", "return_pct", "config_fingerprint") if trade.get(x) is None]
     if missing:
         raise ValueError(f"Missing trade fields: {', '.join(missing)}")
+    event_id = tid.deterministic_id("trade", trade["trade_id"])
+    tid.enqueue("trade", trade, event_id=event_id)
+    return True
+
+
+def apply_trade(con, trade: dict[str, Any]):
     values = [trade.get(field) for field in FIELDS]
     sql = f"INSERT OR IGNORE INTO analytics_trades ({','.join(FIELDS)},created_at) VALUES ({','.join('?' for _ in FIELDS)},?)"
-    def write():
-        with tid.connection() as con:
-            con.execute(sql, (*values, time.time()))
-        from .strategy_stats import update_strategy_statistics
-        update_strategy_statistics(tid, str(trade["strategy_id"]))
-    return tid.submit(write) if async_write else (write() or True)
+    con.execute(sql, (*values, time.time()))
+    from .strategy_stats import update_strategy_statistics
+    update_strategy_statistics(None, str(trade["strategy_id"]), connection=con)
 
 
 def get_trade(tid, trade_id: str):

@@ -21,6 +21,10 @@ try:
     MD_FETCHES = Counter("mtb_md_fetches_total", "Market data fetch operations total")
     MD_BUFFER_SIZE = Gauge("mtb_md_buffer_size", "Market data buffer size per symbol")
     LAST_MD_FETCH = Gauge("mtb_last_md_fetch_timestamp", "Last market data fetch unix timestamp")
+    ANALYTICS_PENDING = Gauge("mtb_analytics_pending_events", "Pending analytics outbox events")
+    ANALYTICS_FAILED = Gauge("mtb_analytics_failed_events", "Dead-letter analytics events")
+    ANALYTICS_OLDEST_PENDING_AGE = Gauge("mtb_analytics_oldest_pending_age_seconds", "Age of oldest pending analytics event")
+    ANALYTICS_LAST_SUCCESS = Gauge("mtb_analytics_last_success_timestamp", "Last successful analytics processing time")
     PROM_AVAILABLE = True
 except Exception:
     # No-op fallbacks
@@ -35,6 +39,7 @@ except Exception:
     ORDER_ATTEMPTS = ORDER_FAILURES = ORDER_SUCCESSES = FILLS = RECONCILED_ORDERS = _Noop()
     OPEN_ORDERS_GAUGE = LAST_RECONCILE = EXECUTION_LATENCY = _Noop()
     OPEN_POSITIONS_GAUGE = POSITION_CLOSES = POSITION_MONITOR_ERRORS = MD_FETCHES = MD_BUFFER_SIZE = LAST_MD_FETCH = _Noop()
+    ANALYTICS_PENDING = ANALYTICS_FAILED = ANALYTICS_OLDEST_PENDING_AGE = ANALYTICS_LAST_SUCCESS = _Noop()
     PROM_AVAILABLE = False
 
 __all__ = [
@@ -52,5 +57,9 @@ __all__ = [
     "MD_FETCHES",
     "MD_BUFFER_SIZE",
     "LAST_MD_FETCH",
+    "ANALYTICS_PENDING",
+    "ANALYTICS_FAILED",
+    "ANALYTICS_OLDEST_PENDING_AGE",
+    "ANALYTICS_LAST_SUCCESS",
     "PROM_AVAILABLE",
 ]

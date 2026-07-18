@@ -5,13 +5,16 @@ from datetime import datetime, timezone
 
 
 def store_snapshot(tid, snapshot: dict, *, async_write: bool = True):
+    event_id = tid.deterministic_id("portfolio", snapshot.get("timestamp"))
+    tid.enqueue("portfolio", snapshot, event_id=event_id)
+    return True
+
+
+def apply_snapshot(con, snapshot: dict):
     fields = ("timestamp", "cash", "equity", "unrealized_pnl", "realized_pnl", "drawdown",
               "open_positions", "exposure", "portfolio_value")
     values = [snapshot.get(x, 0) for x in fields]
-    def write():
-        with tid.connection() as con:
-            con.execute(f"INSERT OR IGNORE INTO portfolio_history ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", values)
-    return tid.submit(write) if async_write else (write() or True)
+    con.execute(f"INSERT OR IGNORE INTO portfolio_history ({','.join(fields)}) VALUES ({','.join('?' for _ in fields)})", values)
 
 
 def get_equity_curve(tid, *, start=None, end=None, limit=10000):

@@ -13,8 +13,8 @@ def _streak(values, winning):
     return best
 
 
-def update_strategy_statistics(tid, strategy_id: str):
-    with tid.connection() as con:
+def update_strategy_statistics(tid, strategy_id: str, *, connection=None):
+    def calculate(con):
         rows = con.execute("SELECT net_pnl,r_multiple,hold_duration,confidence,risk_multiplier FROM analytics_trades WHERE strategy_id=? ORDER BY exit_time", (strategy_id,)).fetchall()
         pnl = [float(x["net_pnl"]) for x in rows]
         if not pnl: return
@@ -36,6 +36,11 @@ def update_strategy_statistics(tid, strategy_id: str):
                   _streak(pnl, True), _streak(pnl, False), avg("confidence"),
                   avg("risk_multiplier"), time.time())
         con.execute("INSERT OR REPLACE INTO strategy_statistics VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", record)
+    if connection is not None:
+        calculate(connection)
+    else:
+        with tid.connection() as con:
+            calculate(con)
 
 
 def get_strategy_statistics(tid, strategy=None):

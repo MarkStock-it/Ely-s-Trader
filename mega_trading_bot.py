@@ -1134,6 +1134,13 @@ def main_loop(cfg: Dict[str, Any]):
     except Exception:
         logger.exception("Failed to init DB at %s", db_path)
     tid = TradingIntelligenceDatabase(db_path)
+    try:
+        from analytics.reconciliation import reconcile_missing_trades
+        reconciliation = reconcile_missing_trades(tid, cfg)
+        if reconciliation["reconciled"]:
+            logger.info("Recovered %s missing analytics trades from execution history", reconciliation["reconciled"])
+    except Exception:
+        logger.exception("Analytics execution-history reconciliation failed; trading startup continues")
     tg = TelegramClient(cfg.get("TELEGRAM_BOT_TOKEN"), cfg.get("TELEGRAM_CHAT_ID"))
     # circuit breaker
     cb = safety.CircuitBreaker(max_failures=int(cfg.get("CB_MAX_FAILURES", 5)), cooldown_seconds=int(cfg.get("CB_COOLDOWN", 300)))
@@ -1400,6 +1407,16 @@ def test_calc_qty():
 
 if __name__ == "__main__":
     import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "analytics-reconcile":
+        parser = argparse.ArgumentParser(prog="mega_trading_bot.py analytics-reconcile")
+        parser.add_argument("--config", help="Path to config.json")
+        cli = parser.parse_args(sys.argv[2:])
+        cfg = load_config(cli.config)
+        reconcile_db = os.path.join(cfg.get("DATA_PATH", "data"), "mega_trades.db")
+        from analytics.reconciliation import reconcile_missing_trades
+        reconcile_tid = TradingIntelligenceDatabase(reconcile_db, asynchronous=False)
+        print(json.dumps(reconcile_missing_trades(reconcile_tid, cfg), indent=2, default=str))
+        raise SystemExit(0)
     if len(sys.argv) > 1 and sys.argv[1] in ("research-run", "research-status", "research-validate"):
         from research.factory import request_from_config
         from research.manager import ResearchManager
