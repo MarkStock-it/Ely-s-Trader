@@ -29,7 +29,23 @@ document.querySelectorAll('.nav-item').forEach(item => item.addEventListener('cl
     item.classList.add('active');
     $(item.dataset.page)?.classList.add('active');
     history.replaceState(null, '', `#${item.dataset.page}`);
+    if (['trade-history','decision-journal','strategy-statistics','portfolio-history','equity-curve'].includes(item.dataset.page)) refreshIntelligence();
 }));
+
+const html = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function refreshIntelligence() {
+    try {
+        const [trades, decisions, strategies, portfolio] = await Promise.all([
+            api('/api/analytics/trades'), api('/api/analytics/decisions'),
+            api('/api/analytics/strategies'), api('/api/analytics/portfolio')]);
+        renderRows($('tid-trades'), trades.trades, 'No completed trades', t => `<tr><td>${new Date(t.exit_time*1000).toLocaleString()}</td><td>${html(t.strategy_id)}</td><td>${html(t.symbol)}</td><td>${html(t.direction)}</td><td>${money(t.entry_price)}</td><td>${money(t.exit_price)}</td><td>${money(t.net_pnl)}</td><td>${number(t.r_multiple)}</td><td>${html(t.exit_reason)}</td></tr>`, 9);
+        renderRows($('tid-decisions'), decisions.decisions, 'No decisions recorded', d => `<tr><td>${new Date(d.timestamp*1000).toLocaleString()}</td><td>${html(d.symbol)}</td><td>${html(d.strategy_id)}</td><td>${html(d.signal)}</td><td>${number(d.confidence)}</td><td>${html(d.final_decision)}</td></tr>`, 6);
+        renderRows($('tid-strategies'), strategies.strategies, 'No statistics yet', s => `<tr><td>${html(s.strategy_id)}</td><td>${s.trades}</td><td>${number(s.win_rate*100)}%</td><td>${s.profit_factor == null ? '--' : number(s.profit_factor)}</td><td>${money(s.expectancy)}</td><td>${number(s.average_r)}</td><td>${money(s.max_drawdown)}</td></tr>`, 7);
+        const rows = portfolio.portfolio.slice().reverse();
+        renderRows($('tid-portfolio'), rows, 'No portfolio snapshots', p => `<tr><td>${new Date(p.timestamp*1000).toLocaleString()}</td><td>${money(p.cash)}</td><td>${money(p.equity)}</td><td>${money(p.unrealized_pnl)}</td><td>${money(p.realized_pnl)}</td><td>${money(p.exposure)}</td><td>${p.open_positions}</td></tr>`, 7);
+        renderRows($('tid-equity'), rows, 'No equity curve yet', p => `<tr><td>${new Date(p.timestamp*1000).toLocaleString()}</td><td>${money(p.equity)}</td><td>${number(p.drawdown*100)}%</td><td>${money(p.portfolio_value)}</td></tr>`, 4);
+    } catch (error) { toast(error.message, true); }
+}
 
 function setValue(id, value) {
     const node = $(id);
@@ -183,6 +199,7 @@ $('run-tournament-btn').onclick = async () => {
     } catch(e){$('tournament-results').innerHTML=`<div class="empty-state">${e.message}</div>`;} finally{button.disabled=false;}
 };
 $('reset-all-btn').onclick = async () => { if (!confirm('Reload saved settings and discard unsaved values?')) return; await loadConfig(); toast('Settings reloaded'); };
+$('generate-reports-btn').onclick = async () => { try { await api('/api/analytics/reports', {method:'POST'}); toast('Analytics reports generated'); } catch(e) { toast(e.message, true); } };
 
 async function refreshResearch() {
     try {

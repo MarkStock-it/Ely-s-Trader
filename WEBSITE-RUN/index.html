@@ -34,6 +34,11 @@
                     <span class="nav-icon">📝</span>
                     <span class="nav-label">Logs</span>
                 </a>
+                <a href="#trade-history" class="nav-item" data-page="trade-history"><span class="nav-icon">T</span><span class="nav-label">Trade History</span></a>
+                <a href="#decision-journal" class="nav-item" data-page="decision-journal"><span class="nav-icon">D</span><span class="nav-label">Decision Journal</span></a>
+                <a href="#strategy-statistics" class="nav-item" data-page="strategy-statistics"><span class="nav-icon">S</span><span class="nav-label">Strategy Statistics</span></a>
+                <a href="#portfolio-history" class="nav-item" data-page="portfolio-history"><span class="nav-icon">P</span><span class="nav-label">Portfolio History</span></a>
+                <a href="#equity-curve" class="nav-item" data-page="equity-curve"><span class="nav-icon">E</span><span class="nav-label">Equity Curve</span></a>
                 <a href="#control-center" class="nav-item" data-page="control-center">
                     <span class="nav-icon">🎛️</span>
                     <span class="nav-label">Control Center</span>
@@ -647,6 +652,11 @@
                     </div>
                 </div>
             </section>
+            <section id="trade-history" class="page"><div class="page-header"><h2>Trade History</h2></div><div class="section table-container"><table class="data-table"><thead><tr><th>Exit</th><th>Strategy</th><th>Symbol</th><th>Direction</th><th>Entry</th><th>Exit</th><th>Net P/L</th><th>R</th><th>Reason</th></tr></thead><tbody id="tid-trades"></tbody></table></div></section>
+            <section id="decision-journal" class="page"><div class="page-header"><h2>Decision Journal</h2></div><div class="section table-container"><table class="data-table"><thead><tr><th>Time</th><th>Symbol</th><th>Strategy</th><th>Signal</th><th>Confidence</th><th>Final decision</th></tr></thead><tbody id="tid-decisions"></tbody></table></div></section>
+            <section id="strategy-statistics" class="page"><div class="page-header"><h2>Strategy Statistics</h2></div><div class="section table-container"><table class="data-table"><thead><tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Profit factor</th><th>Expectancy</th><th>Average R</th><th>Max drawdown</th></tr></thead><tbody id="tid-strategies"></tbody></table></div></section>
+            <section id="portfolio-history" class="page"><div class="page-header"><h2>Portfolio History</h2></div><div class="section table-container"><table class="data-table"><thead><tr><th>Time</th><th>Cash</th><th>Equity</th><th>Unrealized</th><th>Realized</th><th>Exposure</th><th>Open positions</th></tr></thead><tbody id="tid-portfolio"></tbody></table></div></section>
+            <section id="equity-curve" class="page"><div class="page-header"><h2>Equity Curve</h2><button class="btn btn-secondary" id="generate-reports-btn">Generate Reports</button></div><div class="section table-container"><table class="data-table"><thead><tr><th>Time</th><th>Equity</th><th>Drawdown</th><th>Portfolio value</th></tr></thead><tbody id="tid-equity"></tbody></table></div></section>
         </main>
     </div>
 

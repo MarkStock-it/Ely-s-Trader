@@ -12,11 +12,30 @@ from typing import Optional, Dict, Any, List
 logger = logging.getLogger("mega_trading_bot.db")
 
 
+def connect(db_path: str, *, readonly: bool = False) -> sqlite3.Connection:
+    """Return the project's configured SQLite connection.
+
+    All persistence modules use this factory so WAL, timeouts and row handling
+    stay consistent.  A connection is intentionally short lived and safe to use
+    from the calling thread.
+    """
+    if readonly:
+        uri = f"file:{os.path.abspath(db_path).replace(os.sep, '/')}?mode=ro"
+        con = sqlite3.connect(uri, uri=True, timeout=5.0)
+    else:
+        con = sqlite3.connect(db_path, timeout=5.0)
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA synchronous=NORMAL")
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA busy_timeout=5000")
+    return con
+
+
 def init_db(db_path: str) -> None:
     d = os.path.dirname(db_path)
     if d:
         os.makedirs(d, exist_ok=True)
-    con = sqlite3.connect(db_path)
+    con = connect(db_path)
     try:
         cur = con.cursor()
         cur.execute(
@@ -35,6 +54,14 @@ def init_db(db_path: str) -> None:
             )
             """
         )
+        # Migrate databases created by releases before order state tracking.
+        columns = {row[1] for row in cur.execute("PRAGMA table_info(orders)")}
+        if "state" not in columns:
+            cur.execute("ALTER TABLE orders ADD COLUMN state TEXT")
+            cur.execute("UPDATE orders SET state = status WHERE state IS NULL")
+        if "updated_ts" not in columns:
+            cur.execute("ALTER TABLE orders ADD COLUMN updated_ts REAL")
+            cur.execute("UPDATE orders SET updated_ts = created_ts WHERE updated_ts IS NULL")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS events (

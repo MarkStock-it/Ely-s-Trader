@@ -25,6 +25,12 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 import db
 import safety
+from analytics.database import TradingIntelligenceDatabase
+from analytics.trade_history import get_trades
+from analytics.decision_log import get_decision_history
+from analytics.portfolio_history import get_equity_curve
+from analytics.strategy_stats import get_strategy_statistics
+from analytics.reports import generate_reports
 
 
 ROOT = Path(__file__).resolve().parent
@@ -73,6 +79,10 @@ def data_path(cfg: dict[str, Any]) -> Path:
 
 def db_path(cfg: dict[str, Any]) -> Path:
     return data_path(cfg) / "mega_trades.db"
+
+
+def intelligence(cfg=None):
+    return TradingIntelligenceDatabase(db_path(cfg or load_config()), asynchronous=False)
 
 
 def save_config(updates: dict[str, Any]) -> dict[str, Any]:
@@ -290,6 +300,39 @@ def bot_action(action: str):
 @APP.get("/api/logs")
 def api_logs():
     return jsonify(logs=tail_logs(min(int(request.args.get("limit", 300)), 2000)))
+
+
+@APP.get("/api/analytics/trades")
+def analytics_trades():
+    tid = intelligence()
+    return jsonify(trades=get_trades(tid, strategy=request.args.get("strategy"),
+                   symbol=request.args.get("symbol"), limit=min(int(request.args.get("limit", 100)), 1000),
+                   offset=max(int(request.args.get("offset", 0)), 0)))
+
+
+@APP.get("/api/analytics/decisions")
+def analytics_decisions():
+    tid = intelligence()
+    return jsonify(decisions=get_decision_history(tid, strategy=request.args.get("strategy"),
+                   symbol=request.args.get("symbol"), limit=min(int(request.args.get("limit", 100)), 1000),
+                   offset=max(int(request.args.get("offset", 0)), 0)))
+
+
+@APP.get("/api/analytics/portfolio")
+def analytics_portfolio():
+    tid = intelligence()
+    return jsonify(portfolio=get_equity_curve(tid, limit=min(int(request.args.get("limit", 1000)), 10000)))
+
+
+@APP.get("/api/analytics/strategies")
+def analytics_strategies():
+    return jsonify(strategies=get_strategy_statistics(intelligence()))
+
+
+@APP.post("/api/analytics/reports")
+def analytics_reports():
+    paths = generate_reports(intelligence(), ROOT / "reports")
+    return jsonify(reports={key: str(Path(value).relative_to(ROOT)) for key, value in paths.items()})
 
 
 @APP.delete("/api/logs")

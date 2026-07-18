@@ -30,14 +30,25 @@ import pandas as pd
 import numpy as np
 import requests
 import pickle
+import hashlib
 import safety
 import db
 from marketdata import MarketDataManager
 from execution import ExecutionEngine
 import metrics
 from risk import cap_quantity, entry_guard, position_risk
-from strategy_filters import signal_allowed
+from strategy_filters import signal_allowed, market_regime
 from vibetrader import VibeResearchGate
+from analytics.database import TradingIntelligenceDatabase
+from analytics.trade_history import store_trade
+from analytics.portfolio_history import store_snapshot
+from analytics.decision_log import log_decision
+from analytics.market_history import store_market
+
+
+def _config_fingerprint(cfg: Dict[str, Any]) -> str:
+    safe = {k: v for k, v in cfg.items() if k not in {"API_KEY", "API_SECRET", "TELEGRAM_BOT_TOKEN"}}
+    return hashlib.sha256(json.dumps(safe, sort_keys=True, default=str).encode()).hexdigest()
 
 try:
     from dotenv import load_dotenv
@@ -531,6 +542,7 @@ class Position:
     trailing_pct: Optional[float]
     open_ts: float
     protective_order_id: Optional[str] = None
+    analytics_context: Optional[Dict[str, Any]] = None
 
 
 class TradeManager:
@@ -621,6 +633,7 @@ class TradeManager:
                         "trailing_pct": pos.trailing_pct,
                         "open_ts": pos.open_ts,
                         "protective_order_id": pos.protective_order_id,
+                        "analytics_context": pos.analytics_context,
                     }
             with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
@@ -648,7 +661,7 @@ class TradeManager:
         qty = risk_amount / stop_distance
         return float(np.floor(qty * 1000000) / 1000000)
 
-    def open_position(self, symbol: str, side: str, entry_price: float, stop_price: Optional[float], take_profit: Optional[float], trailing_pct: Optional[float], risk_multiplier: float = 1.0) -> Optional[Position]:
+    def open_position(self, symbol: str, side: str, entry_price: float, stop_price: Optional[float], take_profit: Optional[float], trailing_pct: Optional[float], risk_multiplier: float = 1.0, analytics_context: Optional[Dict[str, Any]] = None) -> Optional[Position]:
         if side.lower() != "buy":
             logger.warning("Short selling is disabled: spot accounting is long-only")
             return None
@@ -712,7 +725,7 @@ class TradeManager:
                         self.exec_engine.create_order(symbol, "sell", qty, price=entry_price)
                         return None
                 pos = Position(pid, normalize_symbol(symbol), side, qty, entry_price, stop_price,
-                               take_profit, trailing_pct, time.time(), protective_id)
+                               take_profit, trailing_pct, time.time(), protective_id, analytics_context or {})
                 self.open_positions[pid] = pos
                 # send enriched telegram message
                 msg = (
@@ -824,6 +837,30 @@ class TradeManager:
                     pass
             except Exception:
                 logger.debug("Failed to write audit event for close position")
+            try:
+                context = pos.analytics_context or {}
+                details = result if "result" in locals() else {}
+                fees = float(details.get("entry_fees", 0)) + float(details.get("exit_fees", details.get("fee", 0)))
+                risk_amount = abs(pos.entry_price - (pos.stop_price or pos.entry_price)) * pos.amount
+                store_trade(self.tid, {
+                    "trade_id": pos.id, "strategy_id": context.get("strategy_id", self.cfg.get("STRATEGY", "macd")),
+                    "strategy_version": context.get("strategy_version", self.cfg.get("STRATEGY_VERSION", "1")),
+                    "symbol": pos.symbol, "timeframe": context.get("timeframe", self.cfg.get("INTERVAL", "1m")),
+                    "direction": pos.side, "entry_time": pos.open_ts, "exit_time": time.time(),
+                    "entry_price": pos.entry_price, "exit_price": exit_price, "quantity": pos.amount,
+                    "stop_loss": pos.stop_price, "take_profit": pos.take_profit, "fees": fees,
+                    "spread": float(details.get("spread_rate", self.cfg.get("PAPER_SPREAD_RATE", 0))),
+                    "slippage": float(details.get("slippage_rate", self.cfg.get("PAPER_SLIPPAGE_RATE", 0))),
+                    "gross_pnl": float(details.get("gross_profit", pnl + fees)), "net_pnl": pnl,
+                    "return_pct": pnl_pct, "r_multiple": pnl / risk_amount if risk_amount else None,
+                    "hold_duration": time.time() - pos.open_ts, "exit_reason": reason,
+                    "confidence": context.get("confidence"), "risk_multiplier": context.get("risk_multiplier", 1.0),
+                    "research_approval_id": context.get("research_approval_id"),
+                    "market_regime": context.get("market_regime"),
+                    "config_fingerprint": context.get("config_fingerprint", _config_fingerprint(self.cfg)),
+                })
+            except Exception:
+                logger.exception("Failed to queue completed trade analytics for %s", pid)
             return True
         except Exception:
             logger.exception("Failed to close position %s", pid)
@@ -1096,6 +1133,7 @@ def main_loop(cfg: Dict[str, Any]):
         db.init_db(db_path)
     except Exception:
         logger.exception("Failed to init DB at %s", db_path)
+    tid = TradingIntelligenceDatabase(db_path)
     tg = TelegramClient(cfg.get("TELEGRAM_BOT_TOKEN"), cfg.get("TELEGRAM_CHAT_ID"))
     # circuit breaker
     cb = safety.CircuitBreaker(max_failures=int(cfg.get("CB_MAX_FAILURES", 5)), cooldown_seconds=int(cfg.get("CB_COOLDOWN", 300)))
@@ -1121,6 +1159,7 @@ def main_loop(cfg: Dict[str, Any]):
         model_mgr.load_lstm(cfg.get("LSTM_MODEL_PATH"))
 
     trade_mgr = TradeManager(ex_mgr, cfg, tg, circuit_breaker=cb)
+    trade_mgr.tid = tid
     # execution engine
     exec_engine = ExecutionEngine(ex_mgr, db_path, cfg, circuit_breaker=cb)
     trade_mgr.exec_engine = exec_engine
@@ -1245,34 +1284,82 @@ def main_loop(cfg: Dict[str, Any]):
                 df = ex_mgr.fetch_ohlcv(symbol, interval, limit=200)
             check_volatility_alert(df, cfg, tg)
             sig = strategy_fn(df)
+            candle_ts = df.index[-1] if not hasattr(df, "timestamp") else df.timestamp.iloc[-1]
+            candle_ts = candle_ts.timestamp() if hasattr(candle_ts, "timestamp") else float(candle_ts)
+            regime_now = market_regime(df, cfg)
+            atr_series = atr(df, int(cfg.get("ATR_PERIOD", 14)))
+            atr_now = float(atr_series.iloc[-1]) if len(atr_series) and math.isfinite(float(atr_series.iloc[-1])) else None
+            returns = df.close.pct_change().iloc[-20:]
+            volatility = float(returns.std()) if len(returns) and math.isfinite(float(returns.std())) else None
+            ema_values = df.close.ewm(span=int(cfg.get("REGIME_EMA_PERIOD", 50)), adjust=False).mean()
+            trend_strength = float(ema_values.iloc[-1] / ema_values.iloc[-min(10, len(ema_values))] - 1)
+            store_market(tid, timestamp=candle_ts, symbol=symbol, timeframe=interval, regime=regime_now,
+                         atr=atr_now, volume=float(df.volume.iloc[-1]), volatility=volatility,
+                         trend_strength=trend_strength)
+            account = trade_mgr.summary()
+            with trade_mgr.lock:
+                exposure = sum(p.entry_price * p.amount for p in trade_mgr.open_positions.values())
+                open_count = len(trade_mgr.open_positions)
+            equity = float(account.get("net_equity", account.get("balance", trade_mgr.initial_equity)))
+            store_snapshot(tid, {"timestamp": candle_ts, "cash": account.get("cash", account.get("balance", 0)),
+                "equity": equity, "unrealized_pnl": account.get("unrealized_pnl", 0),
+                "realized_pnl": account.get("realized_pnl", 0),
+                "drawdown": max(0, (trade_mgr.initial_equity - equity) / trade_mgr.initial_equity),
+                "open_positions": open_count, "exposure": exposure, "portfolio_value": equity})
+            indicators = {"atr": atr_now, "volatility": volatility, "trend_strength": trend_strength,
+                          "close": float(df.close.iloc[-1]), "regime": regime_now}
             if sig == "sell":
                 with trade_mgr.lock:
                     long_ids = [p.id for p in trade_mgr.open_positions.values() if p.side.lower() == "buy"]
                 for pid in long_ids:
                     trade_mgr.close_position(pid, "strategy_signal")
+                log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
+                             indicator_values=indicators, final_decision="executed exits")
                 time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
                 continue
             if sig:
                 allowed, regime, filter_reason = signal_allowed(df, sig, cfg)
                 if not allowed:
                     logger.info("Signal filtered: signal=%s regime=%s reason=%s", sig, regime, filter_reason)
+                    log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
+                                 indicator_values=indicators, risk_result={"allowed": False, "reason": filter_reason},
+                                 final_decision="trade rejected by market/risk filter")
                     time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
                     continue
                 vibe = vibe_gate.evaluate(symbol, interval, sig)
                 if not vibe.allowed:
                     logger.info("Signal vetoed by VibeTrader: %s", vibe.reason)
+                    log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
+                                 confidence=vibe.confidence, indicator_values=indicators,
+                                 research_result=vars(vibe), final_decision="trade rejected by research veto")
                     time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
                     continue
                 latest = float(df.close.iloc[-1])
                 atr_val = atr(df, int(cfg.get("ATR_PERIOD", 14))).iloc[-1]
                 if math.isnan(atr_val) or atr_val <= 0:
                     logger.warning("ATR invalid; skipping trade")
+                    log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
+                                 confidence=vibe.confidence, indicator_values=indicators,
+                                 research_result=vars(vibe), risk_result={"allowed": False, "reason": "invalid ATR"},
+                                 final_decision="trade rejected by invalid ATR")
                 else:
                     stop_price = latest - float(cfg.get("ATR_MULTIPLIER", 1.5)) * atr_val if sig == "buy" else latest + float(cfg.get("ATR_MULTIPLIER", 1.5)) * atr_val
                     pos = trade_mgr.open_position(symbol, "buy", latest, stop_price, None,
-                                                  float(cfg.get("TRAILING_PCT", 0.01)), vibe.risk_multiplier)
+                                                  float(cfg.get("TRAILING_PCT", 0.01)), vibe.risk_multiplier,
+                                                  {"strategy_id": strategy_name, "strategy_version": cfg.get("STRATEGY_VERSION", "1"),
+                                                   "timeframe": interval, "confidence": vibe.confidence,
+                                                   "risk_multiplier": vibe.risk_multiplier,
+                                                   "research_approval_id": vibe.research_id,
+                                                   "market_regime": regime, "config_fingerprint": _config_fingerprint(cfg)})
+                    log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
+                                 confidence=vibe.confidence, indicator_values=indicators,
+                                 research_result=vars(vibe), risk_result={"allowed": bool(pos)},
+                                 final_decision="executed" if pos else "trade rejected by execution/risk")
                     if pos:
                         logger.info("Trade opened: %s", pos)
+            else:
+                log_decision(tid, symbol=symbol, strategy=strategy_name, signal=None,
+                             indicator_values=indicators, final_decision="no signal")
             time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
         except KeyboardInterrupt:
             logger.info("Interrupted by user; shutting down")
