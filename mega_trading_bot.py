@@ -40,9 +40,9 @@ from risk import cap_quantity, entry_guard, position_risk
 from strategy_filters import signal_allowed, market_regime
 from vibetrader import VibeResearchGate
 from analytics.database import TradingIntelligenceDatabase
-from analytics.trade_history import store_trade
+from analytics.trade_history import store_trade, get_last_trade
 from analytics.portfolio_history import store_snapshot
-from analytics.decision_log import log_decision
+from analytics.decision_log import log_decision, get_decision_history
 from analytics.market_history import store_market
 
 
@@ -507,14 +507,6 @@ class TelegramClient:
         if not self.token or not self.chat_id:
             logger.debug("Telegram not configured; would send: %s", text)
             return {}
-    @retry_backoff()
-    def get_updates(self) -> Dict[str, Any]:
-        if not self.token:
-            return {}
-        url = f"{self.base}/getUpdates"
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
         url = f"{self.base}/sendMessage"
         try:
             resp = requests.post(url, json={"chat_id": self.chat_id, "text": text}, timeout=10)
@@ -526,6 +518,17 @@ class TelegramClient:
         except Exception as e:
             logger.exception("Failed to send Telegram message: %s", e)
             return {}
+
+    @retry_backoff()
+    def get_updates(self, offset: Optional[int] = None, timeout: int = 0) -> Dict[str, Any]:
+        if not self.token:
+            return {}
+        params = {"timeout": timeout}
+        if offset is not None:
+            params["offset"] = offset
+        resp = requests.get(f"{self.base}/getUpdates", params=params, timeout=max(10, timeout + 5))
+        resp.raise_for_status()
+        return resp.json()
 
 
 # -------------------- Risk & Execution --------------------
@@ -971,6 +974,83 @@ class HeartbeatThread(threading.Thread):
             time.sleep(interval * 60)
 
 
+class TelegramResponder(threading.Thread):
+    """Read-only operational commands for the configured private Telegram chat."""
+    HELP = ("Ely's Trader paper commands:\n"
+            "/status - account and bot status\n"
+            "/positions - open paper positions\n"
+            "/lasttrade - latest completed trade\n"
+            "/why - latest strategy decision\n"
+            "/help - this message\n"
+            "Trading commands are disabled.")
+
+    def __init__(self, telegram, trade_mgr, tid, cfg, poll_timeout=10):
+        super().__init__(daemon=True, name="telegram-responder")
+        self.telegram, self.trade_mgr, self.tid, self.cfg = telegram, trade_mgr, tid, cfg
+        self.poll_timeout, self.offset, self.running = poll_timeout, None, True
+
+    def response(self, text: str) -> str:
+        command = (text or "").strip().lower().split()[0] if (text or "").strip() else ""
+        command = command.split("@", 1)[0]
+        if command in ("/start", "/help", "help", "hello", "hi", ""):
+            return self.HELP
+        if command in ("/buy", "/sell", "/close", "/trade", "/live"):
+            return "Trading commands are disabled. Ely's Telegram interface is read-only."
+        if command in ("/status", "status"):
+            summary = self.trade_mgr.summary()
+            equity = summary.get("net_equity", summary.get("balance", 0))
+            return (f"Mode: {'PAPER' if self.cfg.get('PAPER_MODE') else 'LIVE'}\n"
+                    f"Cash: {summary.get('cash', summary.get('balance', 0)):.2f}\n"
+                    f"Equity: {equity:.2f}\n"
+                    f"Open positions: {summary.get('open_positions', 0)}\n"
+                    f"Realized PnL: {summary.get('realized_pnl', 0):.2f}\n"
+                    f"Unrealized PnL: {summary.get('unrealized_pnl', 0):.2f}")
+        if command in ("/positions", "positions"):
+            with self.trade_mgr.lock:
+                positions = list(self.trade_mgr.open_positions.values())
+            if not positions: return "No open paper positions."
+            return "Open positions:\n" + "\n".join(
+                f"{p.side.upper()} {p.symbol} qty={p.amount:.6f} entry={p.entry_price:.2f} stop={p.stop_price or 'N/A'}"
+                for p in positions)
+        if command in ("/lasttrade", "lasttrade"):
+            trade = get_last_trade(self.tid)
+            if not trade: return "No completed trades recorded yet."
+            return (f"Last trade: {trade['direction'].upper()} {trade['symbol']}\n"
+                    f"Entry: {trade['entry_price']:.2f} Exit: {trade['exit_price']:.2f}\n"
+                    f"Net PnL: {trade['net_pnl']:.2f} ({trade['return_pct']:.2f}%)\n"
+                    f"Reason: {trade.get('exit_reason') or 'unknown'}")
+        if command in ("/why", "why"):
+            rows = get_decision_history(self.tid, limit=1)
+            if not rows: return "No strategy decisions recorded yet."
+            row = rows[0]
+            return (f"Latest decision: {row['final_decision']}\n"
+                    f"Strategy: {row['strategy_id']} Signal: {row.get('signal') or 'none'}\n"
+                    f"Symbol: {row['symbol']}")
+        return "Unknown command. Send /help for available read-only commands."
+
+    def run(self):
+        logger.info("Telegram responder started")
+        try:
+            pending = self.telegram.get_updates(timeout=0).get("result", [])
+            if pending: self.offset = max(int(x["update_id"]) for x in pending) + 1
+        except Exception:
+            logger.exception("Failed to initialize Telegram update offset")
+        while self.running:
+            try:
+                updates = self.telegram.get_updates(offset=self.offset, timeout=self.poll_timeout).get("result", [])
+                for update in updates:
+                    self.offset = int(update["update_id"]) + 1
+                    message = update.get("message") or {}
+                    chat_id = str((message.get("chat") or {}).get("id", ""))
+                    if chat_id != str(self.telegram.chat_id):
+                        logger.warning("Ignored Telegram message from unauthorized chat")
+                        continue
+                    self.telegram.send(self.response(str(message.get("text", ""))))
+            except Exception:
+                logger.exception("Telegram responder polling failed")
+                time.sleep(5)
+
+
 class WatchdogThread(threading.Thread):
     """Restart monitor/heartbeat if they crash; keeps threads alive."""
     def __init__(self, monitor: PositionMonitor, heartbeat: Optional[HeartbeatThread], trade_mgr: TradeManager, ex_mgr: ExchangeManager, tg: Optional[TelegramClient], cfg: Dict[str, Any]):
@@ -1176,6 +1256,10 @@ def main_loop(cfg: Dict[str, Any]):
     if cfg.get("HEARTBEAT_ENABLED"):
         heartbeat = HeartbeatThread(trade_mgr, ex_mgr, tg, cfg)
         heartbeat.start()
+    telegram_responder = None
+    if tg.token and tg.chat_id:
+        telegram_responder = TelegramResponder(tg, trade_mgr, tid, cfg)
+        telegram_responder.start()
     # start watchdog
     watchdog = WatchdogThread(monitor, heartbeat, trade_mgr, ex_mgr, tg, cfg)
     watchdog.start()
@@ -1373,6 +1457,8 @@ def main_loop(cfg: Dict[str, Any]):
             monitor.running = False
             if heartbeat:
                 heartbeat.running = False
+            if telegram_responder:
+                telegram_responder.running = False
             break
         except Exception:
             logger.exception("Error in main loop; continuing")
