@@ -39,6 +39,9 @@ import metrics
 from risk import cap_quantity, entry_guard, position_risk
 from strategy_filters import signal_allowed, market_regime
 from vibetrader import VibeResearchGate
+from gemini_selector import GeminiSymbolSelector
+from investment_committee import GeminiInvestmentCommittee, link_ai_evaluation, log_ai_evaluation
+from telegram_ai import GeminiTelegramChat
 from analytics.database import TradingIntelligenceDatabase
 from analytics.trade_history import store_trade, get_last_trade
 from analytics.portfolio_history import store_snapshot
@@ -47,7 +50,8 @@ from analytics.market_history import store_market
 
 
 def _config_fingerprint(cfg: Dict[str, Any]) -> str:
-    safe = {k: v for k, v in cfg.items() if k not in {"API_KEY", "API_SECRET", "TELEGRAM_BOT_TOKEN"}}
+    safe = {k: v for k, v in cfg.items()
+            if k not in {"API_KEY", "API_SECRET", "TELEGRAM_BOT_TOKEN", "GEMINI_API_KEY"}}
     return hashlib.sha256(json.dumps(safe, sort_keys=True, default=str).encode()).hexdigest()
 
 try:
@@ -78,10 +82,12 @@ DEFAULT_CONFIG = {
     "PAPER_MODE": True,
     "LIVE_MODE": False,
     "EXCHANGE": "binance",
+    "TRADING_MODE": "spot",
     "API_KEY": "",
     "API_SECRET": "",
     "USE_TESTNET": True,
     "SYMBOL": "BTCUSDT",
+    "SYMBOLS": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"],
     "INTERVAL": "1m",
     "RISK_PER_TRADE": 0.01,
     "DAILY_LOSS_LIMIT": 0.03,
@@ -105,6 +111,22 @@ DEFAULT_CONFIG = {
     "DATA_PATH": "data",
     "STATE_FILE": "data/state.json",
     "RATE_LIMIT_SLEEP": 0.5,
+    "GEMINI_SYMBOL_SELECTOR_ENABLED": False,
+    "GEMINI_API_KEY": "",
+    "GEMINI_MODEL": "gemini-2.5-flash-lite",
+    "GEMINI_SYMBOL_COUNT": 3,
+    "GEMINI_REFRESH_SECONDS": 1800,
+    "GEMINI_TIMEOUT_SECONDS": 20,
+    "AI_COMMITTEE_ENABLED": False,
+    "AI_COMMITTEE_SHADOW_MODE": True,
+    "AI_COMMITTEE_MODEL": "gemini-2.5-flash-lite",
+    "AI_COMMITTEE_TIMEOUT_SECONDS": 25,
+    "YAHOO_NEWS_LIMIT": 8,
+    "YAHOO_NEWS_TIMEOUT_SECONDS": 10,
+    "GEMINI_TELEGRAM_CHAT_ENABLED": False,
+    "GEMINI_TELEGRAM_CHAT_MODEL": "gemini-2.5-flash-lite",
+    "GEMINI_TELEGRAM_CHAT_TIMEOUT_SECONDS": 25,
+    "GEMINI_TELEGRAM_CHAT_HISTORY_TURNS": 6,
 }
 
 
@@ -346,6 +368,10 @@ class ExchangeManager:
                     self.exchange.fetch_ticker(sym)
                 except Exception as e:
                     return False, f"Symbol {sym} not found or ticker fetch failed: {e}"
+            if markets:
+                market = markets.get(sym) or markets.get(sym.replace("USDT", "/USDT"))
+                if market and not market.get("spot", False):
+                    return False, f"Symbol {sym} is not a spot market"
             # test public call
             try:
                 _ = self.exchange.fetch_ticker(sym)
@@ -666,7 +692,7 @@ class TradeManager:
 
     def open_position(self, symbol: str, side: str, entry_price: float, stop_price: Optional[float], take_profit: Optional[float], trailing_pct: Optional[float], risk_multiplier: float = 1.0, analytics_context: Optional[Dict[str, Any]] = None) -> Optional[Position]:
         if side.lower() != "buy":
-            logger.warning("Short selling is disabled: spot accounting is long-only")
+            logger.warning("Only spot purchases are allowed; margin and short selling are disabled")
             return None
         balance = self.get_balance()
         if stop_price is None:
@@ -686,6 +712,10 @@ class TradeManager:
         today = time.strftime("%Y-%m-%d")
         equity = float(self.summary().get("net_equity", balance))
         with self.lock:
+            if any(normalize_symbol(p.symbol) == normalize_symbol(symbol)
+                   for p in self.open_positions.values()):
+                logger.info("Spot asset already held: %s", normalize_symbol(symbol))
+                return None
             if today != self.equity_day:
                 self.equity_day, self.day_start_equity = today, equity
             existing = [position_risk(p.entry_price, p.stop_price, p.amount)
@@ -732,7 +762,7 @@ class TradeManager:
                 self.open_positions[pid] = pos
                 # send enriched telegram message
                 msg = (
-                    f"Opened {pos.side.upper()} {pos.symbol}\n"
+                    f"Spot purchase: {pos.symbol}\n"
                     f"Qty: {pos.amount:.6f} @ Entry: {pos.entry_price:.2f}\n"
                     f"Stop: {pos.stop_price:.2f} | TP: {pos.take_profit or 'N/A'}\n"
                 )
@@ -742,7 +772,7 @@ class TradeManager:
                     msg += f"Risk per trade: {risk_amount:.2f} ({float(self.cfg.get('RISK_PER_TRADE'))*100:.2f}%)\n"
                 except Exception:
                     pass
-                logger.info("Opened position %s", pos)
+                logger.info("Opened spot holding %s", pos)
                 try:
                     self._save_state()
                 except Exception:
@@ -808,7 +838,7 @@ class TradeManager:
             pos_value = pos.entry_price * pos.amount
             pnl_pct = (pnl / (pos_value + 1e-9)) * 100
             msg = (
-                f"Closed {pos.side.upper()} {pos.symbol}\n"
+                f"Spot sale: {pos.symbol}\n"
                 f"Entry: {pos.entry_price:.2f} Exit: {exit_price:.2f}\n"
                 f"Qty: {pos.amount:.6f}\n"
                 f"PnL: {pnl:.2f} ({pnl_pct:.2f}%)\n"
@@ -981,21 +1011,44 @@ class TelegramResponder(threading.Thread):
             "/positions - open paper positions\n"
             "/lasttrade - latest completed trade\n"
             "/why - latest strategy decision\n"
+            "/ai <question> - chat with Gemini\n"
+            "/clearai - clear AI conversation memory\n"
             "/help - this message\n"
             "Trading commands are disabled.")
 
-    def __init__(self, telegram, trade_mgr, tid, cfg, poll_timeout=10):
+    def __init__(self, telegram, trade_mgr, tid, cfg, poll_timeout=10, ai_chat=None):
         super().__init__(daemon=True, name="telegram-responder")
         self.telegram, self.trade_mgr, self.tid, self.cfg = telegram, trade_mgr, tid, cfg
         self.poll_timeout, self.offset, self.running = poll_timeout, None, True
+        self.ai_chat = ai_chat or GeminiTelegramChat(cfg)
+
+    def ai_context(self) -> Dict[str, Any]:
+        summary = self.trade_mgr.summary()
+        with self.trade_mgr.lock:
+            holdings = [{"symbol": p.symbol, "quantity": p.amount, "entry": p.entry_price,
+                         "stop": p.stop_price} for p in self.trade_mgr.open_positions.values()]
+        return {"mode": "PAPER" if self.cfg.get("PAPER_MODE") else "LIVE",
+                "trading_mode": self.cfg.get("TRADING_MODE", "spot"),
+                "selected_universe": self.cfg.get("SYMBOLS", [self.cfg.get("SYMBOL", "BTCUSDT")]),
+                "cash": summary.get("cash", summary.get("balance", 0)),
+                "equity": summary.get("net_equity", summary.get("balance", 0)),
+                "realized_pnl": summary.get("realized_pnl", 0),
+                "unrealized_pnl": summary.get("unrealized_pnl", 0), "spot_holdings": holdings}
 
     def response(self, text: str) -> str:
-        command = (text or "").strip().lower().split()[0] if (text or "").strip() else ""
+        raw = (text or "").strip()
+        command = raw.lower().split()[0] if raw else ""
         command = command.split("@", 1)[0]
         if command in ("/start", "/help", "help", "hello", "hi", ""):
             return self.HELP
         if command in ("/buy", "/sell", "/close", "/trade", "/live"):
             return "Trading commands are disabled. Ely's Telegram interface is read-only."
+        if command == "/clearai":
+            self.ai_chat.clear()
+            return "AI conversation memory cleared."
+        if command == "/ai":
+            question = raw.split(maxsplit=1)[1] if len(raw.split(maxsplit=1)) > 1 else ""
+            return self.ai_chat.ask(question, self.ai_context())
         if command in ("/status", "status"):
             summary = self.trade_mgr.summary()
             equity = summary.get("net_equity", summary.get("balance", 0))
@@ -1026,6 +1079,8 @@ class TelegramResponder(threading.Thread):
             return (f"Latest decision: {row['final_decision']}\n"
                     f"Strategy: {row['strategy_id']} Signal: {row.get('signal') or 'none'}\n"
                     f"Symbol: {row['symbol']}")
+        if raw and not raw.startswith("/"):
+            return self.ai_chat.ask(raw, self.ai_context())
         return "Unknown command. Send /help for available read-only commands."
 
     def run(self):
@@ -1341,19 +1396,54 @@ def main_loop(cfg: Dict[str, Any]):
     reconciler = OrderReconciler(ex_mgr, db_path, tg, cfg, interval=int(cfg.get("RECONCILE_INTERVAL", 15)))
     reconciler.start()
 
+    configured_symbols = cfg.get("SYMBOLS") or [cfg.get("SYMBOL", "BTCUSDT")]
+    if isinstance(configured_symbols, str):
+        configured_symbols = [s.strip() for s in configured_symbols.split(",")]
+    candidate_symbols = list(dict.fromkeys(normalize_symbol(s) for s in configured_symbols if s))
+    if not candidate_symbols:
+        candidate_symbols = [normalize_symbol(cfg.get("SYMBOL", "BTCUSDT"))]
+
     # market data manager: background poller + fan-out
+    mdm = None
     try:
         mdm = MarketDataManager(ex_mgr, cfg)
-        mdm.subscribe(cfg.get("SYMBOL", "BTCUSDT"))
+        for candidate_symbol in candidate_symbols:
+            mdm.subscribe(candidate_symbol)
         mdm.start()
     except Exception:
         logger.exception("Failed to start MarketDataManager; continuing with direct fetch")
 
-    symbol = normalize_symbol(cfg.get("SYMBOL", "BTCUSDT"))
     interval = cfg.get("INTERVAL", "1m")
     strategy_name = cfg.get("STRATEGY", "macd")
     strategy_fn = strategy_macd if strategy_name == "macd" else (lambda w: strategy_xgb(w, model_mgr))
     vibe_gate = VibeResearchGate(cfg)
+    symbol_selector = GeminiSymbolSelector(cfg)
+    investment_committee = GeminiInvestmentCommittee(cfg)
+    selected_symbols = candidate_symbols[:max(1, int(cfg.get("GEMINI_SYMBOL_COUNT", 3)))]
+    active_symbols = list(selected_symbols)
+    symbol_index = 0
+    last_selection = None
+
+    def selection_summaries() -> List[Dict[str, Any]]:
+        summaries = []
+        for candidate in candidate_symbols:
+            try:
+                frame = mdm.get_latest(candidate) if mdm else None
+                if frame is None or len(frame) < 50:
+                    continue
+                recent_returns = frame.close.pct_change()
+                volume_mean = float(frame.volume.iloc[-20:].mean())
+                summaries.append({
+                    "symbol": candidate,
+                    "last_price": round(float(frame.close.iloc[-1]), 8),
+                    "return_20": round(float(frame.close.iloc[-1] / frame.close.iloc[-20] - 1), 8),
+                    "volatility_20": round(float(recent_returns.iloc[-20:].std()), 8),
+                    "volume_ratio": round(float(frame.volume.iloc[-1]) / volume_mean, 6) if volume_mean > 0 else 0,
+                    "regime": market_regime(frame, cfg),
+                })
+            except Exception:
+                logger.exception("Failed to summarize %s for Gemini selection", candidate)
+        return summaries
 
     while True:
         try:
@@ -1366,6 +1456,22 @@ def main_loop(cfg: Dict[str, Any]):
                     except Exception:
                         logger.exception("Failed to send kill switch telegram")
                 break
+            summaries = selection_summaries()
+            if summaries:
+                selection = symbol_selector.select(summaries)
+                selected_symbols = selection.symbols or selected_symbols
+                selection_key = (tuple(selected_symbols), selection.source)
+                if selection_key != last_selection:
+                    logger.info("Active spot symbols selected by %s: %s (%s)",
+                                selection.source, ", ".join(selected_symbols), selection.reason)
+                    last_selection = selection_key
+                    symbol_index = 0
+            with trade_mgr.lock:
+                held_symbols = [normalize_symbol(p.symbol) for p in trade_mgr.open_positions.values()]
+            active_symbols = list(dict.fromkeys(selected_symbols + held_symbols))
+            symbol = active_symbols[symbol_index % len(active_symbols)]
+            symbol_index += 1
+            scan_delay = max(1.0, float(cfg.get("SLEEP_INTERVAL", 60)) / len(active_symbols))
             # prefer buffered market data from MarketDataManager
             try:
                 df = mdm.get_latest(symbol)
@@ -1401,21 +1507,29 @@ def main_loop(cfg: Dict[str, Any]):
                           "close": float(df.close.iloc[-1]), "regime": regime_now}
             if sig == "sell":
                 with trade_mgr.lock:
-                    long_ids = [p.id for p in trade_mgr.open_positions.values() if p.side.lower() == "buy"]
+                    long_ids = [p.id for p in trade_mgr.open_positions.values()
+                                if p.side.lower() == "buy" and normalize_symbol(p.symbol) == symbol]
                 for pid in long_ids:
                     trade_mgr.close_position(pid, "strategy_signal")
                 log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
                              indicator_values=indicators, final_decision="executed exits")
-                time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+                time.sleep(scan_delay)
                 continue
             if sig:
+                if sig == "buy" and symbol not in selected_symbols:
+                    logger.info("Buy ignored for %s: not in current Gemini selection", symbol)
+                    log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
+                                 risk_result={"allowed": False, "reason": "not selected by Gemini"},
+                                 final_decision="trade rejected by dynamic symbol allocation")
+                    time.sleep(scan_delay)
+                    continue
                 allowed, regime, filter_reason = signal_allowed(df, sig, cfg)
                 if not allowed:
                     logger.info("Signal filtered: signal=%s regime=%s reason=%s", sig, regime, filter_reason)
                     log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
                                  indicator_values=indicators, risk_result={"allowed": False, "reason": filter_reason},
                                  final_decision="trade rejected by market/risk filter")
-                    time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+                    time.sleep(scan_delay)
                     continue
                 vibe = vibe_gate.evaluate(symbol, interval, sig)
                 if not vibe.allowed:
@@ -1423,7 +1537,7 @@ def main_loop(cfg: Dict[str, Any]):
                     log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
                                  confidence=vibe.confidence, indicator_values=indicators,
                                  research_result=vars(vibe), final_decision="trade rejected by research veto")
-                    time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+                    time.sleep(scan_delay)
                     continue
                 latest = float(df.close.iloc[-1])
                 atr_val = atr(df, int(cfg.get("ATR_PERIOD", 14))).iloc[-1]
@@ -1435,6 +1549,32 @@ def main_loop(cfg: Dict[str, Any]):
                                  final_decision="trade rejected by invalid ATR")
                 else:
                     stop_price = latest - float(cfg.get("ATR_MULTIPLIER", 1.5)) * atr_val if sig == "buy" else latest + float(cfg.get("ATR_MULTIPLIER", 1.5)) * atr_val
+                    candidate_id = hashlib.sha256(
+                        f"{symbol}|{interval}|{strategy_name}|{candle_ts}|{sig}".encode()).hexdigest()
+                    volume_mean = float(df.volume.iloc[-20:].mean())
+                    candidate = {
+                        "candidate_id": candidate_id,
+                        "symbol": symbol,
+                        "side": "BUY_SPOT",
+                        "price": latest,
+                        "timeframe": interval,
+                        "strategy": strategy_name,
+                        "trend": regime,
+                        "atr": float(atr_val),
+                        "volatility": volatility,
+                        "volume_ratio": float(df.volume.iloc[-1]) / volume_mean if volume_mean > 0 else 0,
+                        "stop_loss": float(stop_price),
+                        "take_profit": None,
+                    }
+                    evaluation_id = None
+                    try:
+                        committee_decision = investment_committee.evaluate(candidate)
+                        evaluation_id = log_ai_evaluation(tid, candidate_id, symbol, committee_decision)
+                        logger.info("AI Investment Committee shadow decision for %s: %s confidence=%.2f reason=%s",
+                                    symbol, committee_decision.decision, committee_decision.confidence,
+                                    committee_decision.reason)
+                    except Exception:
+                        logger.exception("AI shadow evaluation/logging failed; deterministic candidate continues")
                     pos = trade_mgr.open_position(symbol, "buy", latest, stop_price, None,
                                                   float(cfg.get("TRAILING_PCT", 0.01)), vibe.risk_multiplier,
                                                   {"strategy_id": strategy_name, "strategy_version": cfg.get("STRATEGY_VERSION", "1"),
@@ -1442,6 +1582,11 @@ def main_loop(cfg: Dict[str, Any]):
                                                    "risk_multiplier": vibe.risk_multiplier,
                                                    "research_approval_id": vibe.research_id,
                                                    "market_regime": regime, "config_fingerprint": _config_fingerprint(cfg)})
+                    if pos and evaluation_id is not None:
+                        try:
+                            link_ai_evaluation(tid, evaluation_id, pos.id)
+                        except Exception:
+                            logger.exception("Failed to link AI evaluation to trade; trade remains valid")
                     log_decision(tid, symbol=symbol, strategy=strategy_name, signal=sig,
                                  confidence=vibe.confidence, indicator_values=indicators,
                                  research_result=vars(vibe), risk_result={"allowed": bool(pos)},
@@ -1451,7 +1596,7 @@ def main_loop(cfg: Dict[str, Any]):
             else:
                 log_decision(tid, symbol=symbol, strategy=strategy_name, signal=None,
                              indicator_values=indicators, final_decision="no signal")
-            time.sleep(max(1, int(cfg.get("SLEEP_INTERVAL", 60))))
+            time.sleep(scan_delay)
         except KeyboardInterrupt:
             logger.info("Interrupted by user; shutting down")
             monitor.running = False

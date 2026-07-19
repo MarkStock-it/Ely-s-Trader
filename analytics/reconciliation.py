@@ -8,7 +8,8 @@ from .trade_history import store_trade
 
 
 def _fingerprint(cfg):
-    safe = {k: v for k, v in cfg.items() if k not in {"API_KEY", "API_SECRET", "TELEGRAM_BOT_TOKEN"}}
+    safe = {k: v for k, v in cfg.items()
+            if k not in {"API_KEY", "API_SECRET", "TELEGRAM_BOT_TOKEN", "GEMINI_API_KEY"}}
     return hashlib.sha256(json.dumps(safe, sort_keys=True, default=str).encode()).hexdigest()
 
 

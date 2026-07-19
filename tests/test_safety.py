@@ -40,3 +40,13 @@ def test_live_requires_native_protective_stops():
         assert False, "Expected native-stop validation failure"
     except ValueError as exc:
         assert "protective stops" in str(exc)
+
+
+def test_non_spot_trading_mode_is_rejected():
+    cfg = {"EXCHANGE": "binance", "SYMBOL": "BTCUSDT", "PAPER_MODE": True,
+           "LIVE_MODE": False, "DATA_PATH": ".", "TRADING_MODE": "futures"}
+    try:
+        safety.validate_config(cfg)
+        assert False, "Expected spot-only validation failure"
+    except ValueError as exc:
+        assert "must be spot" in str(exc)

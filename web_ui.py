@@ -254,6 +254,7 @@ def get_config():
     cfg["API_KEY"] = ""  # never return secrets to the browser
     cfg["API_SECRET"] = ""
     cfg["TELEGRAM_BOT_TOKEN"] = ""
+    cfg["GEMINI_API_KEY"] = ""
     return jsonify(cfg)
 
 

@@ -30,6 +30,8 @@ def validate_config(cfg: Dict[str, Any]) -> None:
         errors.append("LIVE_MODE requires both API_KEY and API_SECRET")
     if live and not cfg.get("NATIVE_PROTECTIVE_STOPS", False):
         errors.append("LIVE_MODE requires verified exchange-native protective stops")
+    if str(cfg.get("TRADING_MODE", "spot")).lower() != "spot":
+        errors.append("TRADING_MODE must be spot; margin, futures, and swaps are disabled")
     for key in ("RISK_PER_TRADE", "DAILY_LOSS_LIMIT", "MAX_DRAWDOWN", "MAX_AGGREGATE_RISK"):
         try:
             value = float(cfg.get(key, 0.01))

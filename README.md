@@ -20,7 +20,25 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
+GEMINI_API_KEY=
 ```
+
+`GEMINI_API_KEY` is optional. When `GEMINI_SYMBOL_SELECTOR_ENABLED` is true,
+Gemini ranks only the liquid USDT spot pairs listed in `SYMBOLS`. The bot sends
+calculated market summaries, never exchange credentials, and falls back to the
+configured symbol order if Gemini is unavailable. Strategy and risk checks
+remain authoritative for every order.
+
+When `AI_COMMITTEE_ENABLED` is true, Yahoo Finance supplies recent headlines
+for each deterministic buy candidate and Gemini records an `APPROVE`, `REJECT`,
+or `ABSTAIN` opinion in `ai_evaluations`. This first phase is shadow-only: the
+opinion is measurable but cannot change execution. Yahoo, Gemini, validation,
+timeout, and analytics failures leave the original strategy path unchanged.
+
+The configured private Telegram chat can also use `/ai <question>` or send a
+plain-text question to chat with Gemini. `/clearai` clears the bounded in-memory
+conversation. Chat receives sanitized paper-account context and has no order,
+configuration, credential, or execution capability.
 
 Never commit `.env`. A Telegram credential was previously committed to this repository. Its owner must revoke and replace that token: deleting it from the current files does not remove it from Git history.
 

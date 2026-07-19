@@ -61,6 +61,17 @@ CREATE TABLE IF NOT EXISTS market_history (
  trend_strength REAL, UNIQUE(timestamp, symbol, timeframe)
 );
 CREATE INDEX IF NOT EXISTS idx_mh_symbol_tf_time ON market_history(symbol, timeframe, timestamp DESC);
+CREATE TABLE IF NOT EXISTS ai_evaluations (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, candidate_id TEXT NOT NULL, trade_id TEXT,
+ created_at REAL NOT NULL, symbol TEXT NOT NULL,
+ decision TEXT NOT NULL CHECK(decision IN ('APPROVE','REJECT','ABSTAIN')),
+ confidence REAL NOT NULL, sentiment TEXT NOT NULL, news_severity TEXT NOT NULL,
+ freshness_minutes INTEGER, risks TEXT NOT NULL, reason TEXT NOT NULL, sources TEXT NOT NULL,
+ prompt_version TEXT NOT NULL, model_version TEXT NOT NULL, latency_ms INTEGER NOT NULL,
+ shadow_mode INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_ai_symbol_time ON ai_evaluations(symbol,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_trade ON ai_evaluations(trade_id);
 CREATE TABLE IF NOT EXISTS analytics_outbox (
  event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL, payload TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','processing','completed','dead_letter')),
